@@ -1,0 +1,6 @@
+.claude/
+*~
+dist-newstyle/
+dist-mcabal/
+out.comb
+flycheck_*.hs

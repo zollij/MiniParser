@@ -1,0 +1,167 @@
+cabal-version:      3.0
+-- The cabal-version field refers to the version of the .cabal specification,
+-- and can be different from the cabal-install (the tool) version and the
+-- Cabal (the library) version you are using. As such, the Cabal (the library)
+-- version used must be equal or greater than the version stated in this field.
+-- Starting from the specification version 2.2, the cabal-version field must be
+-- the first thing in the cabal file.
+
+-- The name of the package.
+name:               MiniParser
+
+-- The package version.
+-- See the Haskell package versioning policy (PVP) for standards
+-- guiding when and how versions should be incremented.
+-- https://pvp.haskell.org
+-- PVP summary:     +-+------- breaking API changes
+--                  | | +----- non-breaking API additions
+--                  | | | +--- code changes with no API change
+version:            0.1.0.0
+
+-- A short (one-line) description of the package.
+synopsis:           Minimalist Text-based parser combinator library
+
+-- A longer description of the package.
+description:        MiniParser is intended to be an easy to understand and easy to use parser which supports GHC & MHS (MicroHs -- Micro Haskell). It is much smaller than many of the industrial grade parsers found on Hackage, yet is efficient enough to be used in real projects.
+
+-- The license under which the package is released.
+license:            BSD-3-Clause
+
+-- The file containing the license text.
+license-file:       LICENSE
+
+-- The package author(s).
+author:             zollij
+category:           Parsing
+build-type:         Simple
+
+-- Extra doc files to be distributed with the package, such as a CHANGELOG or a README.
+extra-doc-files:    CHANGELOG.md
+
+-- Extra source files to be distributed with the package, such as examples, or a tutorial module.
+-- extra-source-files:
+
+common warnings
+    ghc-options: -Wall
+
+library
+    -- Import common warning flags.
+    import:           warnings
+
+    -- Modules exported by the library.
+    exposed-modules:  MiniParser.Base,
+                      MiniParser.Comments,
+                      MiniParser.Parser,
+                      MiniParser.Comments.Haskell,
+                      MiniParser.Comments.C,
+                      MiniParser.Comments.Jack,
+                      MiniParser.Comments.Java,
+                      MiniParser.Comments.Kotlin
+
+    -- Modules included in this library but not exported.
+    -- other-modules:
+
+    -- LANGUAGE extensions used by modules in this package.
+    -- other-extensions:
+
+    -- Other library packages from which modules are imported.
+    build-depends:    base >= 4.15 && < 5,
+                      text
+
+    -- Directories containing source files.
+    hs-source-dirs:   src
+
+    -- Base language which the package is written in.
+    default-language: Haskell2010
+
+test-suite MiniParser-test
+    -- Import common warning flags.
+    import:           warnings
+
+    -- Base language which the package is written in.
+    default-language: Haskell2010
+
+    other-modules:    TestHelpers
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   test
+    main-is:          Test.hs
+
+    -- Test dependencies.
+    build-depends:
+        base >= 4.15 && < 5,
+        MiniParser,
+        HUnit,
+        QuickCheck,
+        text
+
+test-suite comments-c-test
+    import:           warnings
+    default-language: Haskell2010
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   examples, test
+    other-modules:    TestHelpers
+    main-is:          TestC.hs
+    build-depends:
+        base >= 4.15 && < 5,
+        MiniParser,
+        text
+
+test-suite comments-haskell-test
+    import:           warnings
+    default-language: Haskell2010
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   examples, test
+    other-modules:    TestHelpers
+    main-is:          TestHaskell.hs
+    build-depends:
+        base >= 4.15 && < 5,
+        MiniParser,
+        text
+
+test-suite comments-jack-test
+    import:           warnings
+    default-language: Haskell2010
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   examples, test
+    other-modules:    TestHelpers
+    main-is:          TestJack.hs
+    build-depends:
+        base >= 4.15 && < 5,
+        MiniParser,
+        text
+
+test-suite comments-java-test
+    import:           warnings
+    default-language: Haskell2010
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   examples, test
+    other-modules:    TestHelpers
+    main-is:          TestJava.hs
+    build-depends:
+        base >= 4.15 && < 5,
+        MiniParser,
+        text
+
+test-suite comments-kotlin-test
+    import:           warnings
+    default-language: Haskell2010
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   examples, test
+    other-modules:    TestHelpers
+    main-is:          TestKotlin.hs
+    build-depends:
+        base >= 4.15 && < 5,
+        MiniParser,
+        text
+
+test-suite perf-test
+    import:           warnings
+    default-language: Haskell2010
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   test
+    other-modules:    TestHelpers
+    main-is:          TestPerf.hs
+    build-depends:
+        base >= 4.15 && < 5,
+        MiniParser,
+        text

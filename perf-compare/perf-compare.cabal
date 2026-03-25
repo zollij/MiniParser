@@ -1,0 +1,56 @@
+cabal-version:       2.4
+name:                perf-compare
+version:             0.1.0.0
+synopsis:            Parsing benchmarks: MiniParser vs Megaparsec vs Attoparsec
+build-type:          Simple
+
+benchmark bench-csv
+  type:              exitcode-stdio-1.0
+  main-is:           BenchCSV.hs
+  other-modules:     MiniParser.Base
+  hs-source-dirs:    bench, src
+  build-depends:     base >= 4.14 && < 5
+                   , text
+                   , criterion
+                   , megaparsec >= 9.0
+                   , attoparsec
+                   , deepseq
+  default-language:  Haskell2010
+  ghc-options:       -O2
+
+benchmark bench-log
+  type:              exitcode-stdio-1.0
+  main-is:           BenchLog.hs
+  other-modules:     MiniParser.Base
+  hs-source-dirs:    bench, src
+  build-depends:     base >= 4.14 && < 5
+                   , text
+                   , criterion
+                   , megaparsec >= 9.0
+                   , attoparsec
+                   , deepseq
+  default-language:  Haskell2010
+  ghc-options:       -O2
+
+executable bench-miniparser
+  main-is:           BenchMiniParser.hs
+  other-modules:     MiniParser.Base
+  hs-source-dirs:    bench, src
+  build-depends:     base >= 4.14 && < 5
+                   , text
+  default-language:  Haskell2010
+  ghc-options:       -O2
+
+benchmark bench-json
+  type:              exitcode-stdio-1.0
+  main-is:           BenchJSON.hs
+  other-modules:     MiniParser.Base
+  hs-source-dirs:    bench, src
+  build-depends:     base >= 4.14 && < 5
+                   , text
+                   , criterion
+                   , megaparsec >= 9.0
+                   , attoparsec
+                   , deepseq
+  default-language:  Haskell2010
+  ghc-options:       -O2
