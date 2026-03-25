@@ -23,31 +23,31 @@ main :: IO ()
 main = do
   putStrLn "Java comment tests..."
   results <- sequence
-    [ -- pELComment
+    [ -- eolComment
       test "EL comment basic"
-        (stripPos $ parse JV.pELComment "// a comment\nrest")
+        (stripPos $ parse JV.eolComment "// a comment\nrest")
         (Right (" a comment", "rest"))
     , test "EL comment empty"
-        (stripPos $ parse JV.pELComment "//\nrest")
+        (stripPos $ parse JV.eolComment "//\nrest")
         (Right ("", "rest"))
-      -- pInlineComment
+      -- inlineComment
     , test "inline comment basic"
-        (stripPos $ parse JV.pInlineComment "/* a comment */ rest")
+        (stripPos $ parse JV.inlineComment "/* a comment */ rest")
         (Right (" a comment ", " rest"))
     , test "inline comment rejects Javadoc comment"
-        (case parse JV.pInlineComment ("/** api */" :: Text) of
+        (case parse JV.inlineComment ("/** api */" :: Text) of
            Left _ -> Right ("rejected" :: Text, "" :: Text)
            Right _ -> Left [CustomError "should have rejected"])
         (Right ("rejected", ""))
-      -- pJavadocComment
+      -- javadocComment
     , test "Javadoc comment basic"
-        (stripPos $ parse JV.pJavadocComment "/**\n * Description\n * @param x input\n * @return output\n */rest")
+        (stripPos $ parse JV.javadocComment "/**\n * Description\n * @param x input\n * @return output\n */rest")
         (Right (["* Description", "* @param x input", "* @return output"], "rest"))
     , test "Javadoc comment single line"
-        (stripPos $ parse JV.pJavadocComment "/** brief */rest")
+        (stripPos $ parse JV.javadocComment "/** brief */rest")
         (Right (["brief"], "rest"))
     , test "Javadoc comment empty"
-        (stripPos $ parse JV.pJavadocComment "/***/rest")
+        (stripPos $ parse JV.javadocComment "/***/rest")
         (Right ([], "rest"))
       -- comments (combined whitespace + comment stripping)
     , test "comments strips whitespace"

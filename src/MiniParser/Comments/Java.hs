@@ -28,20 +28,20 @@ import Control.Monad (void)
 -- Parsers are tried in order: Javadoc ("/**") must come before
 -- inline ("/*") to avoid a false match on the leading "/*".
 comments :: Parser ()
-comments = pDiscard [void pELComment, void pJavadocComment, void pInlineComment]
+comments = pDiscard [void eolComment, void javadocComment, void inlineComment]
 
 -- | End-of-line comment: "//" followed by text until EOL.
 -- Example: // this is a comment
-pELComment :: Parser Text
-pELComment = do
+eolComment :: Parser Text
+eolComment = do
   _ <- string "//"
   takeUntilEOL'
 
 -- | Javadoc comment: "/** ... */".
 -- Returns the cleaned, non-empty lines between the delimiters.
 -- Leading/trailing whitespace and blank lines are stripped from each line.
-pJavadocComment :: Parser [Text]
-pJavadocComment = do
+javadocComment :: Parser [Text]
+javadocComment = do
   _ <- string "/**"
   content <- takeUntilStr' "*/"
   let contentLines = T.lines content
@@ -51,11 +51,11 @@ pJavadocComment = do
 
 -- | Inline (block) comment: "/* ... */".
 -- Rejects "/**" so that Javadoc comments are not consumed as inline comments.
--- Must be listed after pJavadocComment in the pDiscard list.
-pInlineComment :: Parser Text
-pInlineComment = do
+-- Must be listed after javadocComment in the pDiscard list.
+inlineComment :: Parser Text
+inlineComment = do
   _ <- string "/*"
   c <- lookAhead
   case c of
-    '*' -> pFail [Unexpected "/*" "/**"]  -- reject Javadoc; let pJavadocComment handle it
+    '*' -> pFail [Unexpected "/*" "/**"]  -- reject Javadoc; let javadocComment handle it
     _   -> takeUntilStr' "*/"

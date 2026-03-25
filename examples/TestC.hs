@@ -26,31 +26,31 @@ main :: IO ()
 main = do
   putStrLn "C comment tests..."
   results <- sequence
-    [ -- pELComment
+    [ -- eolComment
       test "EL comment basic"
-        (stripPos $ parse CC.pELComment "// a comment\nrest")
+        (stripPos $ parse CC.eolComment "// a comment\nrest")
         (Right (" a comment", "rest"))
     , test "EL comment empty"
-        (stripPos $ parse CC.pELComment "//\nrest")
+        (stripPos $ parse CC.eolComment "//\nrest")
         (Right ("", "rest"))
     , test "EL comment with cr-lf"
-        (stripPos $ parse CC.pELComment "// comment\r\nrest")
+        (stripPos $ parse CC.eolComment "// comment\r\nrest")
         (Right (" comment", "rest"))
     , test "EL comment with slashes in body"
-        (stripPos $ parse CC.pELComment "// foo // bar\nrest")
+        (stripPos $ parse CC.eolComment "// foo // bar\nrest")
         (Right (" foo // bar", "rest"))
-      -- pInlineComment
+      -- inlineComment
     , test "inline comment basic"
-        (stripPos $ parse CC.pInlineComment "/* a comment */ rest")
+        (stripPos $ parse CC.inlineComment "/* a comment */ rest")
         (Right (" a comment ", " rest"))
     , test "inline comment multiline"
-        (stripPos $ parse CC.pInlineComment "/* line1\nline2 */ rest")
+        (stripPos $ parse CC.inlineComment "/* line1\nline2 */ rest")
         (Right (" line1\nline2 ", " rest"))
     , test "inline comment with slashes"
-        (stripPos $ parse CC.pInlineComment "/* a/b/c */ rest")
+        (stripPos $ parse CC.inlineComment "/* a/b/c */ rest")
         (Right (" a/b/c ", " rest"))
     , test "inline comment with stars"
-        (stripPos $ parse CC.pInlineComment "/* a * b */ rest")
+        (stripPos $ parse CC.inlineComment "/* a * b */ rest")
         (Right (" a * b ", " rest"))
       -- comments (combined whitespace + comment stripping)
     , test "comments strips whitespace"

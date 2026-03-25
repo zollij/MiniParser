@@ -23,38 +23,38 @@ main :: IO ()
 main = do
   putStrLn "Haskell comment tests..."
   results <- sequence
-    [ -- pELComment
+    [ -- eolComment
       test "EL comment basic"
-        (stripPos $ parse HC.pELComment "-- a comment\nrest")
+        (stripPos $ parse HC.eolComment "-- a comment\nrest")
         (Right (" a comment", "rest"))
     , test "EL comment empty"
-        (stripPos $ parse HC.pELComment "--\nrest")
+        (stripPos $ parse HC.eolComment "--\nrest")
         (Right ("", "rest"))
     , test "EL comment with cr-lf"
-        (stripPos $ parse HC.pELComment "-- comment\r\nrest")
+        (stripPos $ parse HC.eolComment "-- comment\r\nrest")
         (Right (" comment", "rest"))
     , test "EL comment with dashes in body"
-        (stripPos $ parse HC.pELComment "-- foo -- bar\nrest")
+        (stripPos $ parse HC.eolComment "-- foo -- bar\nrest")
         (Right (" foo -- bar", "rest"))
-      -- pBlockComment
+      -- blockComment
     , test "block comment basic"
-        (stripPos $ parse HC.pBlockComment "{- a block comment -} rest")
+        (stripPos $ parse HC.blockComment "{- a block comment -} rest")
         (Right (" a block comment ", " rest"))
     , test "block comment multiline"
-        (stripPos $ parse HC.pBlockComment "{- line1\nline2 -} rest")
+        (stripPos $ parse HC.blockComment "{- line1\nline2 -} rest")
         (Right (" line1\nline2 ", " rest"))
       -- Nested block comments
     , test "block comment nested simple"
-        (stripPos $ parse HC.pBlockComment "{- outer {- inner -} still -} rest")
+        (stripPos $ parse HC.blockComment "{- outer {- inner -} still -} rest")
         (Right (" outer {- inner -} still ", " rest"))
     , test "block comment nested double"
-        (stripPos $ parse HC.pBlockComment "{- a {- b {- c -} d -} e -} rest")
+        (stripPos $ parse HC.blockComment "{- a {- b {- c -} d -} e -} rest")
         (Right (" a {- b {- c -} d -} e ", " rest"))
     , test "block comment nested empty inner"
-        (stripPos $ parse HC.pBlockComment "{- outer {--} end -} rest")
+        (stripPos $ parse HC.blockComment "{- outer {--} end -} rest")
         (Right (" outer {--} end ", " rest"))
     , test "block comment nested multiline"
-        (stripPos $ parse HC.pBlockComment "{- line1\n{- nested\ncomment -}\nline4 -} rest")
+        (stripPos $ parse HC.blockComment "{- line1\n{- nested\ncomment -}\nline4 -} rest")
         (Right (" line1\n{- nested\ncomment -}\nline4 ", " rest"))
     , test "comments strips nested block comment"
         (stripPos $ parse HC.comments "{- outer {- inner -} end -} rest")

@@ -31,18 +31,18 @@ import Control.Monad (void)
 -- Parsers are tried in order: KDoc ("/**") must come before
 -- block ("/*") to avoid a false match on the leading "/*".
 comments :: Parser ()
-comments = pDiscard [void pELComment, void pKDocComment, void pBlockComment]
+comments = pDiscard [void eolComment, void kDocComment, void blockComment]
 
 -- | End-of-line comment: "//" followed by text until EOL.
-pELComment :: Parser Text
-pELComment = do
+eolComment :: Parser Text
+eolComment = do
   _ <- string "//"
   takeUntilEOL'
 
 -- | KDoc comment: "/** ... */".
 -- Returns the cleaned, non-empty lines between the delimiters.
-pKDocComment :: Parser [Text]
-pKDocComment = do
+kDocComment :: Parser [Text]
+kDocComment = do
   _ <- string "/**"
   content <- takeUntilStr' "*/"
   let contentLines = T.lines content
@@ -52,9 +52,9 @@ pKDocComment = do
 
 -- | Block comment: "/* ... */" (supports nesting).
 -- Rejects "/**" so that KDoc comments are not consumed as block comments.
--- Must be listed after pKDocComment in the pDiscard list.
-pBlockComment :: Parser Text
-pBlockComment = do
+-- Must be listed after kDocComment in the pDiscard list.
+blockComment :: Parser Text
+blockComment = do
   _ <- string "/*"
   c <- lookAhead
   case c of

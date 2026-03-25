@@ -309,7 +309,7 @@ import MiniParser.Base
 import Control.Monad (void)
 
 comments :: Parser ()
-comments = pDiscard [void pELComment, void pBlockComment]
+comments = pDiscard [void eolComment, void blockComment]
 ```
 
 ### Choosing a Different Language Comment Style
@@ -480,9 +480,9 @@ These peek at input without consuming it.
 | Parser | Type | Description |
 |--------|------|-------------|
 | `takeUntil` | `Char -> Parser Text` | Read until character (don't consume it) |
-| `takeUntil'` | `Char -> Parser Text` | Read until character (consume and pDiscard it) |
+| `takeUntil'` | `Char -> Parser Text` | Read until character (consume and discard it) |
 | `takeUntilStr` | `Text -> Parser Text` | Read until text (don't consume it) |
-| `takeUntilStr'` | `Text -> Parser Text` | Read until text (consume and pDiscard it) |
+| `takeUntilStr'` | `Text -> Parser Text` | Read until text (consume and discard it) |
 | `takeUntilEOL` | `Parser Text` | Read until end of line (don't consume EOL) |
 | `takeUntilEOL'` | `Parser Text` | Read until end of line (consume EOL) |
 | `takeAll` | `Parser Text` | Read all remaining input |
@@ -550,43 +550,43 @@ comment parsers:
 | Parser | Type | Syntax |
 |--------|------|--------|
 | `comments` | `Parser ()` | Strips whitespace + all C comments |
-| `pELComment` | `Parser Text` | `// ...` until end of line |
-| `pInlineComment` | `Parser Text` | `/* ... */` |
+| `eolComment` | `Parser Text` | `// ...` until end of line |
+| `inlineComment` | `Parser Text` | `/* ... */` |
 
 ### MiniParser.Comments.Haskell
 
 | Parser | Type | Syntax |
 |--------|------|--------|
 | `comments` | `Parser ()` | Strips whitespace + all Haskell comments |
-| `pELComment` | `Parser Text` | `-- ...` until end of line |
-| `pBlockComment` | `Parser Text` | `{- ... -}` (nested) |
+| `eolComment` | `Parser Text` | `-- ...` until end of line |
+| `blockComment` | `Parser Text` | `{- ... -}` (nested) |
 
 ### MiniParser.Comments.Jack
 
 | Parser | Type | Syntax |
 |--------|------|--------|
 | `comments` | `Parser ()` | Strips whitespace + all Jack comments |
-| `pELComment` | `Parser Text` | `// ...` until end of line |
-| `pAPIComment` | `Parser [Text]` | `/** ... */` -- returns cleaned lines |
-| `pInlineComment` | `Parser Text` | `/* ... */` (rejects `/**`) |
+| `eolComment` | `Parser Text` | `// ...` until end of line |
+| `apiComment` | `Parser [Text]` | `/** ... */` -- returns cleaned lines |
+| `inlineComment` | `Parser Text` | `/* ... */` (rejects `/**`) |
 
 ### MiniParser.Comments.Java
 
 | Parser | Type | Syntax |
 |--------|------|--------|
 | `comments` | `Parser ()` | Strips whitespace + all Java comments |
-| `pELComment` | `Parser Text` | `// ...` until end of line |
-| `pJavadocComment` | `Parser [Text]` | `/** ... */` -- returns cleaned lines |
-| `pInlineComment` | `Parser Text` | `/* ... */` (rejects `/**`) |
+| `eolComment` | `Parser Text` | `// ...` until end of line |
+| `javadocComment` | `Parser [Text]` | `/** ... */` -- returns cleaned lines |
+| `inlineComment` | `Parser Text` | `/* ... */` (rejects `/**`) |
 
 ### MiniParser.Comments.Kotlin
 
 | Parser | Type | Syntax |
 |--------|------|--------|
 | `comments` | `Parser ()` | Strips whitespace + all Kotlin comments |
-| `pELComment` | `Parser Text` | `// ...` until end of line |
-| `pKDocComment` | `Parser [Text]` | `/** ... */` -- returns cleaned lines |
-| `pBlockComment` | `Parser Text` | `/* ... */` (nested, rejects `/**`) |
+| `eolComment` | `Parser Text` | `// ...` until end of line |
+| `kDocComment` | `Parser [Text]` | `/** ... */` -- returns cleaned lines |
+| `blockComment` | `Parser Text` | `/* ... */` (nested, rejects `/**`) |
 
 ## Writing a Custom Comment Module
 
@@ -604,15 +604,15 @@ import Data.Text (Text)
 import Control.Monad (void)
 
 comments :: Parser ()
-comments = pDiscard [void pLineComment, void pBlockComment]
+comments = pDiscard [void lineComment, void blockComment]
 
-pLineComment :: Parser Text
-pLineComment = do
+lineComment :: Parser Text
+lineComment = do
   _ <- string "#"          -- e.g., Python/Ruby style
   takeUntilEOL'
 
-pBlockComment :: Parser Text
-pBlockComment = do
+blockComment :: Parser Text
+blockComment = do
   _ <- string "'''"        -- e.g., Python triple-quote
   takeUntilStr' "'''"
 ```
@@ -625,7 +625,7 @@ pBlockComment = do
 
 **Important:** When your language has overlapping comment delimiters (e.g.,
 `/*` vs `/**`), list the longer delimiter first in `pDiscard`. The parsers
-are tried in order, so `pJavadocComment` must come before `pInlineComment`.
+are tried in order, so `javadocComment` must come before `inlineComment`.
 
 ## Performance Benchmarks
 

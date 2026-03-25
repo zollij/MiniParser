@@ -253,13 +253,13 @@ lookAheadMulti cnt = P $
 -- ┌────────────────┬───────────────────────────────┬─────────────────────────────┐
 -- │     Parser     │         Target found          │      Target not found       │
 -- ├────────────────┼───────────────────────────────┼─────────────────────────────┤
--- │ takeUntil     │ Right (before, targetAndRest) │ Right (allInput, "")        │
+-- │ takeUntil      │ Right (before, targetAndRest) │ Right (allInput, "")        │
 -- ├────────────────┼───────────────────────────────┼─────────────────────────────┤
--- │ takeUntilStr  │ Right (before, targetAndRest) │ Right (allInput, "")        │
+-- │ takeUntilStr   │ Right (before, targetAndRest) │ Right (allInput, "")        │
 -- ├────────────────┼───────────────────────────────┼─────────────────────────────┤
--- │ takeUntil'    │ Right (before, afterTarget)   │ Left (can't consume target) │
+-- │ takeUntil'     │ Right (before, afterTarget)   │ Left (can't consume target) │
 -- ├────────────────┼───────────────────────────────┼─────────────────────────────┤
--- │ takeUntilStr' │ Right (before, afterTarget)   │ Left (can't consume target) │
+-- │ takeUntilStr'  │ Right (before, afterTarget)   │ Left (can't consume target) │
 -- └────────────────┴───────────────────────────────┴─────────────────────────────┘
 
 -- Read until we see the input character.

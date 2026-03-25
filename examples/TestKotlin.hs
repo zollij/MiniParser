@@ -23,47 +23,47 @@ main :: IO ()
 main = do
   putStrLn "Kotlin comment tests..."
   results <- sequence
-    [ -- pELComment
+    [ -- eolComment
       test "EL comment basic"
-        (stripPos $ parse KT.pELComment "// a comment\nrest")
+        (stripPos $ parse KT.eolComment "// a comment\nrest")
         (Right (" a comment", "rest"))
     , test "EL comment empty"
-        (stripPos $ parse KT.pELComment "//\nrest")
+        (stripPos $ parse KT.eolComment "//\nrest")
         (Right ("", "rest"))
-      -- pBlockComment (non-nested)
+      -- blockComment (non-nested)
     , test "block comment basic"
-        (stripPos $ parse KT.pBlockComment "/* a comment */ rest")
+        (stripPos $ parse KT.blockComment "/* a comment */ rest")
         (Right (" a comment ", " rest"))
     , test "block comment multiline"
-        (stripPos $ parse KT.pBlockComment "/* line1\nline2 */ rest")
+        (stripPos $ parse KT.blockComment "/* line1\nline2 */ rest")
         (Right (" line1\nline2 ", " rest"))
     , test "block comment rejects KDoc"
-        (case parse KT.pBlockComment ("/** kdoc */" :: Text) of
+        (case parse KT.blockComment ("/** kdoc */" :: Text) of
            Left _ -> Right ("rejected" :: Text, "" :: Text)
            Right _ -> Left [CustomError "should have rejected"])
         (Right ("rejected", ""))
-      -- pBlockComment (nested)
+      -- blockComment (nested)
     , test "block comment nested simple"
-        (stripPos $ parse KT.pBlockComment "/* outer /* inner */ still */ rest")
+        (stripPos $ parse KT.blockComment "/* outer /* inner */ still */ rest")
         (Right (" outer /* inner */ still ", " rest"))
     , test "block comment nested double"
-        (stripPos $ parse KT.pBlockComment "/* a /* b /* c */ d */ e */ rest")
+        (stripPos $ parse KT.blockComment "/* a /* b /* c */ d */ e */ rest")
         (Right (" a /* b /* c */ d */ e ", " rest"))
     , test "block comment nested empty inner"
-        (stripPos $ parse KT.pBlockComment "/* outer /**/ end */ rest")
+        (stripPos $ parse KT.blockComment "/* outer /**/ end */ rest")
         (Right (" outer /**/ end ", " rest"))
     , test "block comment nested multiline"
-        (stripPos $ parse KT.pBlockComment "/* line1\n/* nested\ncomment */\nline4 */ rest")
+        (stripPos $ parse KT.blockComment "/* line1\n/* nested\ncomment */\nline4 */ rest")
         (Right (" line1\n/* nested\ncomment */\nline4 ", " rest"))
-      -- pKDocComment
+      -- kDocComment
     , test "KDoc comment basic"
-        (stripPos $ parse KT.pKDocComment "/**\n * Description\n * @param x input\n * @return output\n */rest")
+        (stripPos $ parse KT.kDocComment "/**\n * Description\n * @param x input\n * @return output\n */rest")
         (Right (["* Description", "* @param x input", "* @return output"], "rest"))
     , test "KDoc comment single line"
-        (stripPos $ parse KT.pKDocComment "/** brief */rest")
+        (stripPos $ parse KT.kDocComment "/** brief */rest")
         (Right (["brief"], "rest"))
     , test "KDoc comment empty"
-        (stripPos $ parse KT.pKDocComment "/***/rest")
+        (stripPos $ parse KT.kDocComment "/***/rest")
         (Right ([], "rest"))
       -- comments (combined whitespace + comment stripping)
     , test "comments strips whitespace"
