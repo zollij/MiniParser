@@ -7,7 +7,7 @@ reveletory [Programming in Haskell](https://people.cs.nott.ac.uk/pszgmh/pih.html
 book, and Heitor Toledo Lassarote de Paula's excellent
 ["Parser Combinators in Haskell"](https://serokell.io/blog/parser-combinators-in-haskell).
 Additionally, I have a need for combinator based compilation which brought me
-to the [MicroHs](https://github.com/augustss/MicroHs) compiler system and the
+to Lennart Augustsson's wonderful [MicroHs](https://github.com/augustss/MicroHs) compiler and the
 standard parsers I looked at (Megaparsec, Attoparsec) don't support MicroHs.
 MiniParser fills that niche. I was also motivated by my relative inexperience with
 Haskell and the desire to code something useful from scratch.
