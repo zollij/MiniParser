@@ -32,6 +32,7 @@ ghc-build:
 # pass the SCALE argument to perf-test.
 ghc-test: ghc-build
 	cabal run MiniParser-test
+	cabal run expr-parser-test
 	cabal run comments-c-test
 	cabal run comments-haskell-test
 	cabal run comments-jack-test

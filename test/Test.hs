@@ -7,10 +7,11 @@ import MiniParser.Parser
 import TestHelpers (stripPos, getPosFromResult)
 import Test.HUnit
 import Test.QuickCheck
-import Data.Char (isDigit, isAlpha, isAlphaNum, isLower, isUpper)
+import Data.Char (isDigit, isAlpha, isAlphaNum, isLower, isUpper, isHexDigit, isOctDigit, intToDigit)
 import Control.Applicative (Alternative(..), many)
 import Data.Text (Text)
 import qualified Data.Text as T
+import Numeric (showHex, showOct, showIntAtBase)
 
 -- HUnit tests for specific parser behavior, positive and negative
 hunitTests :: Test
@@ -26,9 +27,9 @@ hunitTests = TestList
   , "parse letter failure (empty)" ~: parse letter "" ~?= Left [EndOfInput]
   , "parse identifier success" ~: stripPos (parse identifier "foo123 ") ~?= Right ("foo123", " ")
   , "parse identifier failure (capital start)" ~: parse identifier "Foo123" ~?= Left [Unexpected' "F"]
-  , "parse natural success" ~: stripPos (parse natural "42 foo") ~?= Right (42, " foo")
-  , "parse natural failure (non-digit start)" ~: parse natural "abc" ~?= Left [Unexpected' "a"]
-  , "parse natural failure (empty)" ~: parse natural "" ~?= Left [EndOfInput]
+  , "parse decimal success" ~: stripPos (parse decimal "42 foo") ~?= Right (42, " foo")
+  , "parse decimal failure (non-digit start)" ~: parse decimal "abc" ~?= Left [Unexpected' "a"]
+  , "parse decimal failure (empty)" ~: parse decimal "" ~?= Left [EndOfInput]
   , "parse integer success (positive)" ~: stripPos (parse integer "42 foo") ~?= Right (42, " foo")
   , "parse integer success (negative)" ~: stripPos (parse integer "-42 foo") ~?= Right (-42, " foo")
   , "parse integer failure (dash only)" ~: parse integer "- foo" ~?= Left [Unexpected' "-"]
@@ -74,12 +75,134 @@ hunitTests = TestList
   , "parse ident success" ~: stripPos (parse ident "foo123") ~?= Right ("foo123", "")
   , "parse ident failure (uppercase start)" ~: parse ident "Foo123" ~?= Left [Unexpected' "F"]
   , "parse ident failure (digit start)" ~: parse ident "123foo" ~?= Left [Unexpected' "1"]
-  , "parse nat success" ~: stripPos (parse nat "123") ~?= Right (123, "")
-  , "parse nat success with remainder" ~: stripPos (parse nat "456abc") ~?= Right (456, "abc")
-  , "parse nat failure (no digits)" ~: parse nat "abc" ~?= Left [Unexpected' "a"]
+  , "parse dec success" ~: stripPos (parse dec "123") ~?= Right (123, "")
+  , "parse dec success with remainder" ~: stripPos (parse dec "456abc") ~?= Right (456, "abc")
+  , "parse dec failure (no digits)" ~: parse dec "abc" ~?= Left [Unexpected' "a"]
   , "parse int success (positive)" ~: stripPos (parse int "123") ~?= Right (123, "")
   , "parse int success (negative)" ~: stripPos (parse int "-456") ~?= Right (-456, "")
   , "parse int failure (invalid negative)" ~: parse int "-abc" ~?= Left [Unexpected' "-"]
+  -- Base-level hex (no prefix)
+  , "parse hex success (single digit)" ~: stripPos (parse hex "0") ~?= Right (0, "")
+  , "parse hex success (lower f)" ~: stripPos (parse hex "f") ~?= Right (15, "")
+  , "parse hex success (upper F)" ~: stripPos (parse hex "F") ~?= Right (15, "")
+  , "parse hex success (ff)" ~: stripPos (parse hex "ff") ~?= Right (255, "")
+  , "parse hex success (mixed case)" ~: stripPos (parse hex "aBcDeF") ~?= Right (0xABCDEF, "")
+  , "parse hex success (1A)" ~: stripPos (parse hex "1A") ~?= Right (26, "")
+  , "parse hex success with remainder" ~: stripPos (parse hex "ffxyz") ~?= Right (255, "xyz")
+  , "parse hex stops at non-hex digit 'g'" ~: stripPos (parse hex "ffg") ~?= Right (255, "g")
+  , "parse hex failure (non-hex start)" ~: parse hex "g" ~?= Left [Unexpected' "g"]
+  , "parse hex failure (empty)" ~: parse hex "" ~?= Left [EndOfInput]
+  , "parse hex does NOT strip whitespace" ~: parse hex "  ff" ~?= Left [Unexpected' " "]
+  -- Base-level oct (no prefix)
+  , "parse oct success (0)" ~: stripPos (parse oct "0") ~?= Right (0, "")
+  , "parse oct success (7)" ~: stripPos (parse oct "7") ~?= Right (7, "")
+  , "parse oct success (777)" ~: stripPos (parse oct "777") ~?= Right (511, "")
+  , "parse oct success (10)" ~: stripPos (parse oct "10") ~?= Right (8, "")
+  , "parse oct stops at '8'" ~: stripPos (parse oct "778") ~?= Right (63, "8")
+  , "parse oct stops at '9'" ~: stripPos (parse oct "79") ~?= Right (7, "9")
+  , "parse oct failure ('8')" ~: parse oct "8" ~?= Left [Unexpected' "8"]
+  , "parse oct failure ('9')" ~: parse oct "9" ~?= Left [Unexpected' "9"]
+  , "parse oct failure (letter)" ~: parse oct "a" ~?= Left [Unexpected' "a"]
+  , "parse oct failure (empty)" ~: parse oct "" ~?= Left [EndOfInput]
+  -- Base-level bin (no prefix)
+  , "parse bin success (0)" ~: stripPos (parse bin "0") ~?= Right (0, "")
+  , "parse bin success (1)" ~: stripPos (parse bin "1") ~?= Right (1, "")
+  , "parse bin success (1010)" ~: stripPos (parse bin "1010") ~?= Right (10, "")
+  , "parse bin success (8 ones = 255)" ~: stripPos (parse bin "11111111") ~?= Right (255, "")
+  , "parse bin stops at '2'" ~: stripPos (parse bin "102") ~?= Right (2, "2")
+  , "parse bin failure ('2')" ~: parse bin "2" ~?= Left [Unexpected' "2"]
+  , "parse bin failure ('9')" ~: parse bin "9" ~?= Left [Unexpected' "9"]
+  , "parse bin failure (empty)" ~: parse bin "" ~?= Left [EndOfInput]
+  -- Base-level digs (generic): sanity-check pmult dispatch via hex/oct/bin above
+  , "parse digs isDigit 10 = dec behavior" ~:
+    stripPos (parse (digs isDigit 10) "42abc") ~?= Right (42, "abc")
+  -- hexidecimal (Parser level, with "0x" prefix)
+  , "parse hexidecimal success (0x0)" ~: stripPos (parse hexidecimal "0x0") ~?= Right (0, "")
+  , "parse hexidecimal success (0x1)" ~: stripPos (parse hexidecimal "0x1") ~?= Right (1, "")
+  , "parse hexidecimal success (0xff)" ~: stripPos (parse hexidecimal "0xff") ~?= Right (255, "")
+  , "parse hexidecimal success (0xFF)" ~: stripPos (parse hexidecimal "0xFF") ~?= Right (255, "")
+  , "parse hexidecimal success (0Xff capital X)" ~: stripPos (parse hexidecimal "0Xff") ~?= Right (255, "")
+  , "parse hexidecimal success (0x1A mixed case)" ~: stripPos (parse hexidecimal "0x1A") ~?= Right (26, "")
+  , "parse hexidecimal success (0xABCDEF)" ~:
+    stripPos (parse hexidecimal "0xABCDEF") ~?= Right (11259375, "")
+  , "parse hexidecimal strips leading whitespace" ~:
+    stripPos (parse hexidecimal "  0x10") ~?= Right (16, "")
+  , "parse hexidecimal strips Haskell line comment" ~:
+    stripPos (parse hexidecimal "-- ignored\n0xff") ~?= Right (255, "")
+  , "parse hexidecimal strips Haskell block comment" ~:
+    stripPos (parse hexidecimal "{- ignored -}0xff") ~?= Right (255, "")
+  , "parse hexidecimal with trailing remainder" ~:
+    stripPos (parse hexidecimal "0x10 rest") ~?= Right (16, " rest")
+  , "parse hexidecimal stops at non-hex digit" ~:
+    stripPos (parse hexidecimal "0x1Ag") ~?= Right (26, "g")
+  , "parse hexidecimal failure (empty)" ~: parse hexidecimal "" ~?= Left [EndOfInput]
+  , "parse hexidecimal failure (no prefix, decimal digit)" ~:
+    parse hexidecimal "42" ~?= Left [Unexpected' "4"]
+  , "parse hexidecimal failure (wrong first char)" ~:
+    parse hexidecimal "x10" ~?= Left [Unexpected' "x"]
+  , "parse hexidecimal failure (bare 0, nothing after)" ~:
+    parse hexidecimal "0" ~?= Left [EndOfInput]
+  , "parse hexidecimal failure (wrong second char)" ~:
+    parse hexidecimal "0y10" ~?= Left [Unexpected' "y"]
+  , "parse hexidecimal failure (prefix then EOF)" ~:
+    parse hexidecimal "0x" ~?= Left [EndOfInput]
+  , "parse hexidecimal failure (prefix then non-hex)" ~:
+    parse hexidecimal "0xg" ~?= Left [Unexpected' "g"]
+  , "parse hexidecimal failure (prefix then space)" ~:
+    parse hexidecimal "0x ff" ~?= Left [Unexpected' " "]
+  -- octal (Parser level, with "0o" prefix)
+  , "parse octal success (0o0)" ~: stripPos (parse octal "0o0") ~?= Right (0, "")
+  , "parse octal success (0o7)" ~: stripPos (parse octal "0o7") ~?= Right (7, "")
+  , "parse octal success (0o17)" ~: stripPos (parse octal "0o17") ~?= Right (15, "")
+  , "parse octal success (0O17 capital O)" ~: stripPos (parse octal "0O17") ~?= Right (15, "")
+  , "parse octal success (0o777)" ~: stripPos (parse octal "0o777") ~?= Right (511, "")
+  , "parse octal success (0o10)" ~: stripPos (parse octal "0o10") ~?= Right (8, "")
+  , "parse octal strips leading whitespace" ~:
+    stripPos (parse octal "  0o17") ~?= Right (15, "")
+  , "parse octal stops at '8' (not an octal digit)" ~:
+    stripPos (parse octal "0o778") ~?= Right (63, "8")
+  , "parse octal failure (empty)" ~: parse octal "" ~?= Left [EndOfInput]
+  , "parse octal failure (no prefix)" ~: parse octal "42" ~?= Left [Unexpected' "4"]
+  , "parse octal failure (prefix then EOF)" ~: parse octal "0o" ~?= Left [EndOfInput]
+  , "parse octal failure (prefix then '8')" ~: parse octal "0o8" ~?= Left [Unexpected' "8"]
+  , "parse octal failure (prefix then '9')" ~: parse octal "0o9" ~?= Left [Unexpected' "9"]
+  , "parse octal failure (wrong prefix letter)" ~: parse octal "0p1" ~?= Left [Unexpected' "p"]
+  -- binary (Parser level, with "0b" prefix)
+  , "parse binary success (0b0)" ~: stripPos (parse binary "0b0") ~?= Right (0, "")
+  , "parse binary success (0b1)" ~: stripPos (parse binary "0b1") ~?= Right (1, "")
+  , "parse binary success (0b10)" ~: stripPos (parse binary "0b10") ~?= Right (2, "")
+  , "parse binary success (0b1010)" ~: stripPos (parse binary "0b1010") ~?= Right (10, "")
+  , "parse binary success (0B1010 capital B)" ~:
+    stripPos (parse binary "0B1010") ~?= Right (10, "")
+  , "parse binary success (0b11111111)" ~:
+    stripPos (parse binary "0b11111111") ~?= Right (255, "")
+  , "parse binary strips leading whitespace" ~:
+    stripPos (parse binary "  0b101") ~?= Right (5, "")
+  , "parse binary stops at '2'" ~:
+    stripPos (parse binary "0b102") ~?= Right (2, "2")
+  , "parse binary failure (empty)" ~: parse binary "" ~?= Left [EndOfInput]
+  , "parse binary failure (no prefix)" ~: parse binary "10" ~?= Left [Unexpected' "1"]
+  , "parse binary failure (prefix then EOF)" ~: parse binary "0b" ~?= Left [EndOfInput]
+  , "parse binary failure (prefix then '2')" ~: parse binary "0b2" ~?= Left [Unexpected' "2"]
+  , "parse binary failure (wrong prefix letter)" ~: parse binary "0c1" ~?= Left [Unexpected' "c"]
+  -- Backtracking with <|>: if the first branch consumes the '0' and fails,
+  -- the second branch must still see the original input.
+  , "hexidecimal <|> decimal picks decimal for '42'" ~:
+    stripPos (parse (hexidecimal <|> decimal) "42") ~?= Right (42, "")
+  , "hexidecimal <|> decimal picks hex for '0x1A'" ~:
+    stripPos (parse (hexidecimal <|> decimal) "0x1A") ~?= Right (26, "")
+  , "hexidecimal <|> decimal backtracks over consumed '0' for '0123'" ~:
+    stripPos (parse (hexidecimal <|> decimal) "0123") ~?= Right (123, "")
+  , "prefix cascade picks binary for '0b10'" ~:
+    stripPos (parse (binary <|> octal <|> hexidecimal <|> decimal) "0b10") ~?= Right (2, "")
+  , "prefix cascade picks octal for '0o10'" ~:
+    stripPos (parse (binary <|> octal <|> hexidecimal <|> decimal) "0o10") ~?= Right (8, "")
+  , "prefix cascade picks hex for '0x10'" ~:
+    stripPos (parse (binary <|> octal <|> hexidecimal <|> decimal) "0x10") ~?= Right (16, "")
+  , "prefix cascade falls through to decimal for '10'" ~:
+    stripPos (parse (binary <|> octal <|> hexidecimal <|> decimal) "10") ~?= Right (10, "")
+  , "prefix cascade falls through to decimal for '010'" ~:
+    stripPos (parse (binary <|> octal <|> hexidecimal <|> decimal) "010") ~?= Right (10, "")
   -- Look ahead parsers
   , "parse lookAheadMulti success" ~: stripPos (parse (lookAheadMulti 3) "hello") ~?= Right ("hel", "hello")
   , "parse lookAheadMulti exact length" ~: stripPos (parse (lookAheadMulti 5) "hello") ~?= Right ("hello", "hello")
@@ -189,12 +312,33 @@ hunitTests = TestList
   -- ident position: "foo" is 3 chars on line 1
   , "pos: ident" ~:
     getPosFromResult (parse ident "foo rest") @?= Just (Pos 1 4)
-  -- nat position: "123" is 3 chars
-  , "pos: nat" ~:
-    getPosFromResult (parse nat "123rest") @?= Just (Pos 1 4)
+  -- dec position: "123" is 3 chars
+  , "pos: dec" ~:
+    getPosFromResult (parse dec "123rest") @?= Just (Pos 1 4)
   -- int negative: "-42" is 3 chars
   , "pos: negative int" ~:
     getPosFromResult (parse int "-42rest") @?= Just (Pos 1 4)
+  -- hex base-level: "ff" is 2 chars -> col 3
+  , "pos: hex" ~:
+    getPosFromResult (parse hex "ffrest") @?= Just (Pos 1 3)
+  -- oct base-level: "777" is 3 chars
+  , "pos: oct" ~:
+    getPosFromResult (parse oct "777rest") @?= Just (Pos 1 4)
+  -- bin base-level: "1010" is 4 chars
+  , "pos: bin" ~:
+    getPosFromResult (parse bin "1010rest") @?= Just (Pos 1 5)
+  -- hexidecimal: "0xff" is 4 chars -> col 5
+  , "pos: hexidecimal" ~:
+    getPosFromResult (parse hexidecimal "0xff rest") @?= Just (Pos 1 5)
+  -- octal: "0o777" is 5 chars -> col 6
+  , "pos: octal" ~:
+    getPosFromResult (parse octal "0o777rest") @?= Just (Pos 1 6)
+  -- binary: "0b1010" is 6 chars -> col 7
+  , "pos: binary" ~:
+    getPosFromResult (parse binary "0b1010rest") @?= Just (Pos 1 7)
+  -- hexidecimal with leading whitespace: "  0x10" consumes 6 chars -> col 7
+  , "pos: hexidecimal with leading spaces" ~:
+    getPosFromResult (parse hexidecimal "  0x10") @?= Just (Pos 1 7)
   -- lookAhead does NOT advance position
   , "pos: lookAhead no advance" ~:
     getPosFromResult (parse lookAhead "hello") @?= Just (Pos 1 1)
@@ -344,9 +488,9 @@ prop_parseEOF_failure str = not (null str) ==>
 prop_parseTakeWhile :: String -> Property
 prop_parseTakeWhile input =
   let tinput = T.pack input
-      digs   = T.takeWhile isDigit tinput
+      ds     = T.takeWhile isDigit tinput
       rest   = T.dropWhile isDigit tinput
-  in stripPos (parse (pTakeWhile isDigit) tinput) === Right (digs, rest)
+  in stripPos (parse (pTakeWhile isDigit) tinput) === Right (ds, rest)
 
 prop_takeAll :: String -> Property
 prop_takeAll input =
@@ -361,11 +505,69 @@ prop_parseString_success target input =
 
 prop_parseNat_success :: Property
 prop_parseNat_success = forAll (choose (0, 999999)) $ \n ->
-  let str = T.pack (show n) in stripPos (parse nat str) === Right (n, T.empty)
+  let str = T.pack (show n) in stripPos (parse dec str) === Right (n, T.empty)
 
 prop_parseInt_success :: Property
 prop_parseInt_success = forAll (choose (-999999, 999999)) $ \n ->
   let str = T.pack (show n) in stripPos (parse int str) === Right (n, T.empty)
+
+-- Base-level round-trips: render N in base B, parse it, get N back.
+prop_parseHex_success :: Property
+prop_parseHex_success = forAll (choose (0, 0xFFFFFFFF)) $ \n ->
+  let str = T.pack (showHex n "") in stripPos (parse hex str) === Right (n, T.empty)
+
+prop_parseOct_success :: Property
+prop_parseOct_success = forAll (choose (0, 0xFFFFFFFF)) $ \n ->
+  let str = T.pack (showOct n "") in stripPos (parse oct str) === Right (n, T.empty)
+
+prop_parseBin_success :: Property
+prop_parseBin_success = forAll (choose (0, 0xFFFFFFFF)) $ \n ->
+  let str = T.pack (showIntAtBase 2 intToDigit n "")
+  in stripPos (parse bin str) === Right (n, T.empty)
+
+-- Prefixed variants
+prop_parseHexidecimal_success :: Property
+prop_parseHexidecimal_success = forAll (choose (0, 0xFFFFFFFF)) $ \n ->
+  let str = T.pack ("0x" ++ showHex n "")
+  in stripPos (parse hexidecimal str) === Right (n, T.empty)
+
+prop_parseOctal_success :: Property
+prop_parseOctal_success = forAll (choose (0, 0xFFFFFFFF)) $ \n ->
+  let str = T.pack ("0o" ++ showOct n "")
+  in stripPos (parse octal str) === Right (n, T.empty)
+
+prop_parseBinary_success :: Property
+prop_parseBinary_success = forAll (choose (0, 0xFFFFFFFF)) $ \n ->
+  let str = T.pack ("0b" ++ showIntAtBase 2 intToDigit n "")
+  in stripPos (parse binary str) === Right (n, T.empty)
+
+-- Failure: first char must be in the alphabet for each base.
+prop_parseHex_rejectNonHex :: Property
+prop_parseHex_rejectNonHex =
+  forAll (suchThat arbitrary (\c -> not (isHexDigit c) && c /= '\NUL')) $ \c ->
+    parse hex (T.singleton c) == Left [Unexpected' [c]]
+
+prop_parseOct_reject8or9 :: Property
+prop_parseOct_reject8or9 = forAll (elements "89") $ \c ->
+  parse oct (T.singleton c) == Left [Unexpected' [c]]
+
+prop_parseOct_rejectNonOct :: Property
+prop_parseOct_rejectNonOct =
+  forAll (suchThat arbitrary (\c -> not (isOctDigit c) && c /= '\NUL')) $ \c ->
+    parse oct (T.singleton c) == Left [Unexpected' [c]]
+
+prop_parseBin_rejectDigits2to9 :: Property
+prop_parseBin_rejectDigits2to9 = forAll (elements "23456789") $ \c ->
+  parse bin (T.singleton c) == Left [Unexpected' [c]]
+
+-- Trailing garbage: a valid prefix of hex digits followed by a non-hex char
+-- should parse the prefix and leave the rest in the stream.
+prop_parseHex_remainder :: Property
+prop_parseHex_remainder =
+  forAll (choose (0, 0xFFFF)) $ \n ->
+  forAll (suchThat arbitrary (\c -> not (isHexDigit c) && c /= '\NUL')) $ \c ->
+    let str = T.pack (showHex n "" ++ [c])
+    in stripPos (parse hex str) === Right (n, T.singleton c)
 
 -- Test choice with random parsers
 prop_choice_success :: Property
@@ -423,6 +625,19 @@ main = do
   putStrLn "Testing number parsing..."
   quickCheck prop_parseNat_success
   quickCheck prop_parseInt_success
+
+  putStrLn "Testing hex/oct/bin parsing..."
+  quickCheck prop_parseHex_success
+  quickCheck prop_parseOct_success
+  quickCheck prop_parseBin_success
+  quickCheck prop_parseHexidecimal_success
+  quickCheck prop_parseOctal_success
+  quickCheck prop_parseBinary_success
+  quickCheck prop_parseHex_rejectNonHex
+  quickCheck prop_parseOct_reject8or9
+  quickCheck prop_parseOct_rejectNonOct
+  quickCheck prop_parseBin_rejectDigits2to9
+  quickCheck prop_parseHex_remainder
 
   putStrLn "Testing choice..."
   quickCheck prop_choice_success

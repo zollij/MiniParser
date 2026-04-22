@@ -16,7 +16,7 @@ name:               MiniParser
 -- PVP summary:     +-+------- breaking API changes
 --                  | | +----- non-breaking API additions
 --                  | | | +--- code changes with no API change
-version:            0.1.0.0
+version:            0.2.0.0
 
 -- A short (one-line) description of the package.
 synopsis:           Minimalist Text-based parser combinator library
@@ -56,7 +56,8 @@ library
                       MiniParser.Comments.C,
                       MiniParser.Comments.Jack,
                       MiniParser.Comments.Java,
-                      MiniParser.Comments.Kotlin
+                      MiniParser.Comments.Kotlin,
+                      MiniParser.ExprParser
 
     -- Modules included in this library but not exported.
     -- other-modules:
@@ -152,6 +153,19 @@ test-suite comments-kotlin-test
     build-depends:
         base >= 4.15 && < 5,
         MiniParser,
+        text
+
+test-suite expr-parser-test
+    import:           warnings
+    default-language: Haskell2010
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   test
+    other-modules:    TestHelpers
+    main-is:          TestExprParser.hs
+    build-depends:
+        base >= 4.15 && < 5,
+        MiniParser,
+        HUnit,
         text
 
 test-suite perf-test

@@ -35,6 +35,7 @@ MiniParser supports both **GHC** (Glasgow Haskell Compiler) and **MHS**
   - [Standard Alternative Parsers](#standard-alternative-parsers)
   - [Whitespace and Comments](#whitespace-and-comments)
   - [Line-Oriented Parsers](#line-oriented-parsers)
+  - [Expression Parser](#expression-parser)
   - [Utilities](#utilities)
 - [Comment Module Reference](#comment-module-reference)
 - [Writing a Custom Comment Module](#writing-a-custom-comment-module)
@@ -150,11 +151,12 @@ for package compatibility details.
 
 ## Testing
 
-There are 7 test suites defined in `MiniParser.cabal`:
+There are 8 test suites defined in `MiniParser.cabal`:
 
 | Suite                    | File                   | Tests | Description |
 |--------------------------|------------------------|-------|-------------|
-| `MiniParser-test`        | `test/Test.hs`         | 133 HUnit + 26 QuickCheck | Core parser tests |
+| `MiniParser-test`        | `test/Test.hs`         | 225 HUnit + 36 QuickCheck | Core parser tests |
+| `expr-parser-test`       | `test/TestExprParser.hs` | 111 HUnit | Expression parser tests |
 | `comments-c-test`        | `examples/TestC.hs`    | 21   | C comment parser tests |
 | `comments-haskell-test`  | `examples/TestHaskell.hs` | 23 | Haskell comment parser tests |
 | `comments-jack-test`     | `examples/TestJack.hs` | 20   | Jack comment parser tests |
@@ -188,6 +190,7 @@ MiniParser/
 │   └── MiniParser/
 │       ├── Base.hs                   -- Parser type, instances, all primitives
 │       ├── Comments.hs               -- Default comment parser (Haskell: --, {- -})
+│       ├── ExprParser.hs             -- Expression parser (buildExprParser, Operator)
 │       ├── Parser.hs                 -- Re-exports Base + comment-aware parsers
 │       └── Comments/
 │           ├── C.hs                  -- C-style comments: //, /* */
@@ -197,6 +200,7 @@ MiniParser/
 │           └── Kotlin.hs             -- Kotlin comments: //, /* */ (nested), /** */
 ├── test/
 │   ├── Test.hs                       -- Main test suite (HUnit + QuickCheck)
+│   ├── TestExprParser.hs             -- Expression parser tests (111 HUnit tests)
 │   ├── TestPerf.hs                   -- Performance and large-input tests
 │   └── TestHelpers.hs                -- Shared test utilities (stripPos, test)
 └── examples/
@@ -218,6 +222,15 @@ comment stripping), look-ahead parsers, take-until parsers, `choice`,
 has no dependency on any comment parser. The parse stream type is `Text`
 (from `Data.Text`).
 
+**`src/MiniParser/ExprParser.hs`** -- Expression parser module, inspired by
+Parsec's `buildExpressionParser`. Exports the `Operator` type (with
+constructors `InfixL`, `InfixR`, `InfixN`, `Prefix`, `Postfix`) and the
+`buildExprParser` function, which builds a full expression parser from an
+operator table and a term parser. The operator table specifies fixity,
+associativity, and precedence. Only depends on `Base.hs`. The source file
+contains a detailed running example that traces the parsing of
+`"-3 + 4 * 2 ^ 2"` step by step through each precedence level.
+
 **`src/MiniParser/Comments.hs`** -- The default comment parser. Exports a single
 function `comments :: Parser ()` that strips Haskell comments (`--` and
 `{- -}`) and whitespace. **This is the file users replace** to change the
@@ -226,9 +239,10 @@ comment handling for their project. See
 
 **`src/MiniParser/Parser.hs`** -- The main user-facing module. Re-exports
 everything from `Base` and adds higher-level parsers that depend on comments:
-`token`, `identifier`, `natural`, `integer`, `symbol`, `character`,
-`delimList`, `trim`, `row`, `splitLines`, `splitLinesT`. These parsers call
-`Comments.comments` to strip whitespace and comments before parsing.
+`token`, `identifier`, `decimal`, `integer`, `hexidecimal`, `octal`, `binary`,
+`symbol`, `character`, `delimList`, `trim`, `row`, `splitLines`, `splitLinesT`.
+These parsers call `Comments.comments` to strip whitespace and comments before
+parsing.
 
 **`src/MiniParser/Comments/C.hs`** -- C-style comment parser. Handles
 end-of-line comments (`// ...`) and inline block comments (`/* ... */`).
@@ -251,6 +265,13 @@ end-of-line (`// ...`), nested block comments (`/* ... */`), and KDoc comments
 **`test/Test.hs`** -- Main test suite with 133 HUnit tests covering every
 exported parser, plus 28 QuickCheck properties for randomized testing of
 character parsers, text parsers, number parsers, and structural properties.
+
+**`test/TestExprParser.hs`** -- Expression parser test suite with 111 HUnit
+tests. Covers basic arithmetic, precedence, left/right/non-associativity,
+prefix and postfix operators, parenthesised sub-expressions, complex
+expressions, whitespace handling, minimal operator table configurations,
+and intentional parse failures (trailing operators, unmatched parentheses,
+chained non-associative operators, etc.).
 
 **`test/TestPerf.hs`** -- Performance and large-input tests. Generates
 configurable-size inputs (100KB+ at default scale) and verifies both
@@ -290,6 +311,11 @@ cycle that Haskell does not allow.
 
 Users import `MiniParser.Parser` which re-exports all of `Base`, so the split
 is invisible from the outside.
+
+`ExprParser.hs` depends only on `Base.hs` (it does not use `token`, `symbol`,
+or any comment-aware parsers). Users pass in their own operator parsers
+(typically built with `symbol` from `Parser.hs`) when constructing the
+operator table.
 
 ## Configuring Comment Parsers
 
@@ -408,7 +434,7 @@ constructors:
 
 | Constructor | Fields | Meaning | Produced by |
 |-------------|--------|---------|-------------|
-| `EndOfInput` | *(none)* | Parser needed more input but the stream is empty | `item`, `satisfy`, `char`, `digit`, `lower`, `upper`, `letter`, `alphanum`, `nat`, `lookAhead`, `lookAheadMulti`, `nestedBlockComment` |
+| `EndOfInput` | *(none)* | Parser needed more input but the stream is empty | `item`, `satisfy`, `char`, `digit`, `lower`, `upper`, `letter`, `alphanum`, `dec`, `hex`, `oct`, `bin`, `lookAhead`, `lookAheadMulti`, `nestedBlockComment` |
 | `Unexpected` | `expected::String, actual::String` | Parser expected one thing but found another | `string` (expected the target string, got a prefix of the input) |
 | `Unexpected'` | `actual::String` | Parser found an unexpected character (no specific expectation) | `satisfy`, `char`, `digit`, `lower`, `upper`, `letter`, `alphanum`, `pTakeWhile1`, `eof` |
 | `CustomError` | `message::String` | User-defined error message | `pFailStr` |
@@ -446,8 +472,12 @@ These operate directly on input without stripping whitespace or comments.
 | `string` | `Text -> Parser Text` | Match an exact text string |
 | `ident` | `Parser Text` | Parse a lowercase-starting identifier |
 | `identWith` | `[Char] -> Parser Text` | Parse an identifier with allowed special characters (e.g., `_`, `$`, `.`) |
-| `nat` | `Parser Int` | Parse a natural number |
+| `dec` | `Parser Int` | Parse a decimal (base 10) number |
 | `int` | `Parser Int` | Parse an integer, possibly negative |
+| `hex` | `Parser Int` | Parse hex (base 16) digits (no `0x` prefix); accepts `0`-`9`, `a`-`f`, `A`-`F` |
+| `oct` | `Parser Int` | Parse octal (base 8) digits (no `0o` prefix); accepts `0`-`7` |
+| `bin` | `Parser Int` | Parse binary (base 2) digits (no `0b` prefix); accepts `0`-`1` |
+| `digs` | `(Char -> Bool) -> Int -> Parser Int` | Shared digit-folding primitive: take chars matching the predicate, fold into an `Int` using the given positional multiplier. Used by `dec`/`hex`/`oct`/`bin`. |
 | `digits` | `Parser Text` | One or more digits as `Text` (efficient alternative to `many digit`) |
 | `letters` | `Parser Text` | One or more letters as `Text` (efficient alternative to `many letter`) |
 
@@ -460,8 +490,11 @@ before parsing.
 |--------|------|-------------|
 | `token` | `Parser a -> Parser a` | Strip comments/whitespace, then run parser |
 | `identifier` | `Parser Text` | `token ident` |
-| `natural` | `Parser Int` | `token nat` |
+| `decimal` | `Parser Int` | `token dec` |
 | `integer` | `Parser Int` | `token int` |
+| `hexidecimal` | `Parser Int` | Unsigned hex literal with `0x` / `0X` prefix (e.g. `0xff`) |
+| `octal` | `Parser Int` | Unsigned octal literal with `0o` / `0O` prefix (e.g. `0o17`) |
+| `binary` | `Parser Int` | Unsigned binary literal with `0b` / `0B` prefix (e.g. `0b1010`) |
 | `symbol` | `Text -> Parser Text` | `token (string xs)` |
 | `character` | `Char -> Parser Char` | `token (char c)` |
 | `delimList` | `Char -> Parser a -> Parser [a]` | Parse a delimited list (e.g., comma-separated) |
@@ -533,6 +566,58 @@ Defined in `Parser.hs`. These use `comments` for stripping.
 | `row` | `Parser Text` | Parse one row (returns `empty` at EOF, otherwise calls `trim`) |
 | `splitLines` | `Parser [Text]` | Parse all rows (`many row`) |
 | `splitLinesT` | `Text -> [Text]` | Pure function: split text into trimmed lines |
+
+### Expression Parser
+
+Defined in `MiniParser.ExprParser`. Builds a full expression parser from an
+operator table and a term parser, inspired by Parsec's
+`buildExpressionParser`.
+
+| Type / Function | Description |
+|-----------------|-------------|
+| `Operator a` | Operator definition: `InfixL`, `InfixR`, `InfixN` (binary), `Prefix`, `Postfix` (unary). Each wraps a `Parser` that matches the operator symbol and returns the semantic function. |
+| `buildExprParser` | `[[Operator a]] -> Parser a -> Parser a` -- Build an expression parser from an operator table (list of rows, highest precedence first) and a term parser. |
+
+**Example:** A simple arithmetic expression parser with precedence,
+associativity, and parentheses:
+
+```haskell
+{-# LANGUAGE OverloadedStrings #-}
+import MiniParser.Parser
+import MiniParser.ExprParser
+
+opTable :: [[Operator Int]]
+opTable =
+  [ [ Prefix  (symbol "-" *> pure negate)          ]  -- highest precedence
+  , [ InfixR  (symbol "^" *> pure (^))             ]
+  , [ InfixL  (symbol "*" *> pure (*))
+    , InfixL  (symbol "/" *> pure div)              ]
+  , [ InfixL  (symbol "+" *> pure (+))
+    , InfixL  (symbol "-" *> pure (-))              ]  -- lowest precedence
+  ]
+
+term :: Parser Int
+term = parens <|> decimal
+  where parens = character '(' *> expr <* character ')'
+
+expr :: Parser Int
+expr = buildExprParser opTable term
+```
+
+```
+> parse expr "2 + 3 * 4"
+Right (14, ...)          -- 2 + (3*4)
+
+> parse expr "2 ^ 3 ^ 2"
+Right (512, ...)         -- 2 ^ (3^2)   (right-associative)
+
+> parse expr "(1 + 2) * 3"
+Right (9, ...)           -- parens override precedence
+```
+
+Parentheses are handled by the term parser, not the operator table. When
+the term parser sees `(`, it calls `expr` recursively, which re-enters
+the full precedence tower.
 
 ### Utilities
 
@@ -650,7 +735,7 @@ entries for stable timings.
 
 - **Log** (100 entries, ~4KB) -- Structured log lines in the format
   `YYYY-MM-DD HH:MM:SS IP.AD.DR.ES product`. Exercises numeric parsing
-  (`nat`/`decimal`) and fixed-format sequential parsing.
+  (`dec`/`decimal`) and fixed-format sequential parsing.
 
 - **JSON** (806 values, ~7KB) -- Nested objects, arrays, strings, integers,
   booleans, and null. Exercises recursive descent, whitespace skipping, and
@@ -690,7 +775,7 @@ GHC 9.6.7, `-O2`, Linux x86_64. Times are the Criterion `mean` estimate.
 MiniParser is consistently faster than Megaparsec across all three workloads.
 On CSV parsing (primarily string-oriented), MiniParser is within 20% of
 Attoparsec. On number-heavy workloads (log and JSON), Attoparsec's highly
-optimized `decimal` parser gives it a larger advantage. MiniParser's `nat`
+optimized `decimal` parser gives it a larger advantage. MiniParser's `dec`
 parser uses a simpler `foldl'`-based implementation, which leaves room for
 future optimization.
 
@@ -710,7 +795,7 @@ support them). Timing uses `getCPUTime`, 1000 iterations per workload.
 MHS uses graph reduction (interpreted combinator execution) rather than
 native code generation, so the large slowdown is expected. The ratio varies
 by workload: CSV is primarily string-oriented (`pTakeWhile`, `T.pack`) and
-fares best; log and JSON are number-heavy (`nat` calls `foldl'` per digit)
+fares best; log and JSON are number-heavy (`dec` calls `foldl'` per digit)
 and show larger ratios.
 
 ### Reproducing

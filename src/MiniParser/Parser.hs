@@ -15,7 +15,7 @@ module MiniParser.Parser (
   -- Re-export everything from Base
   module MiniParser.Base,
   -- Higher-level parsers that use comments
-  token, identifier, natural, integer, symbol, character,
+  token, identifier, decimal, integer, hexidecimal, octal, binary, symbol, character,
   delimList, trim, row, splitLines, splitLinesT, digits,
   letters
 ) where
@@ -37,11 +37,37 @@ token p = do
 identifier :: Parser T.Text
 identifier = token ident
 
-natural :: Parser Int
-natural = token nat
+-- parse an unsigned decimal (base 10) number
+decimal :: Parser Int
+decimal = token dec
 
+-- parse a signed decimal (base 10) number
 integer :: Parser Int
 integer = token int
+
+-- parse a hexidecimal (base 16) number; starting with "0x"
+hexidecimal :: Parser Int
+hexidecimal = do
+  comments
+  _ <- char '0'
+  _ <- char 'x' <|> char 'X'
+  hex
+
+-- parse an octal (base 8) number; starting with "0o"
+octal :: Parser Int
+octal = do
+  comments
+  _ <- char '0'
+  _ <- char 'o' <|> char 'O'
+  oct
+
+-- parse a binary (base 2) number; starting with "0b"
+binary :: Parser Int
+binary = do
+  comments
+  _ <- char '0'
+  _ <- char 'b' <|> char 'B'
+  bin
 
 symbol :: T.Text -> Parser T.Text
 symbol xs = token (string xs)
