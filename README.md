@@ -155,7 +155,7 @@ There are 8 test suites defined in `MiniParser.cabal`:
 
 | Suite                    | File                   | Tests | Description |
 |--------------------------|------------------------|-------|-------------|
-| `MiniParser-test`        | `test/Test.hs`         | 225 HUnit + 36 QuickCheck | Core parser tests |
+| `MiniParser-test`        | `test/Test.hs`         | 225 HUnit + 37 QuickCheck | Core parser tests |
 | `expr-parser-test`       | `test/TestExprParser.hs` | 111 HUnit | Expression parser tests |
 | `comments-c-test`        | `examples/TestC.hs`    | 21   | C comment parser tests |
 | `comments-haskell-test`  | `examples/TestHaskell.hs` | 23 | Haskell comment parser tests |
@@ -472,12 +472,12 @@ These operate directly on input without stripping whitespace or comments.
 | `string` | `Text -> Parser Text` | Match an exact text string |
 | `ident` | `Parser Text` | Parse a lowercase-starting identifier |
 | `identWith` | `[Char] -> Parser Text` | Parse an identifier with allowed special characters (e.g., `_`, `$`, `.`) |
-| `dec` | `Parser Int` | Parse a decimal (base 10) number |
-| `int` | `Parser Int` | Parse an integer, possibly negative |
-| `hex` | `Parser Int` | Parse hex (base 16) digits (no `0x` prefix); accepts `0`-`9`, `a`-`f`, `A`-`F` |
-| `oct` | `Parser Int` | Parse octal (base 8) digits (no `0o` prefix); accepts `0`-`7` |
-| `bin` | `Parser Int` | Parse binary (base 2) digits (no `0b` prefix); accepts `0`-`1` |
-| `digs` | `(Char -> Bool) -> Int -> Parser Int` | Shared digit-folding primitive: take chars matching the predicate, fold into an `Int` using the given positional multiplier. Used by `dec`/`hex`/`oct`/`bin`. |
+| `dec` | `Num a => Parser a` | Parse a decimal (base 10) number |
+| `int` | `Num a => Parser a` | Parse an integer, possibly negative |
+| `hex` | `Num a => Parser a` | Parse hex (base 16) digits (no `0x` prefix); accepts `0`-`9`, `a`-`f`, `A`-`F` |
+| `oct` | `Num a => Parser a` | Parse octal (base 8) digits (no `0o` prefix); accepts `0`-`7` |
+| `bin` | `Num a => Parser a` | Parse binary (base 2) digits (no `0b` prefix); accepts `0`-`1` |
+| `digs` | `Num a => (Char -> Bool) -> a -> Parser a` | Shared digit-folding primitive: take chars matching the predicate, fold into `a` using the given positional multiplier. Used by `dec`/`hex`/`oct`/`bin`. |
 | `digits` | `Parser Text` | One or more digits as `Text` (efficient alternative to `many digit`) |
 | `letters` | `Parser Text` | One or more letters as `Text` (efficient alternative to `many letter`) |
 
@@ -490,11 +490,20 @@ before parsing.
 |--------|------|-------------|
 | `token` | `Parser a -> Parser a` | Strip comments/whitespace, then run parser |
 | `identifier` | `Parser Text` | `token ident` |
-| `decimal` | `Parser Int` | `token dec` |
-| `integer` | `Parser Int` | `token int` |
-| `hexidecimal` | `Parser Int` | Unsigned hex literal with `0x` / `0X` prefix (e.g. `0xff`) |
-| `octal` | `Parser Int` | Unsigned octal literal with `0o` / `0O` prefix (e.g. `0o17`) |
-| `binary` | `Parser Int` | Unsigned binary literal with `0b` / `0B` prefix (e.g. `0b1010`) |
+| `decimal` | `Num a => Parser a` | `token dec` |
+| `integer` | `Num a => Parser a` | `token int` |
+| `hexidecimal` | `Num a => Parser a` | Unsigned hex literal with `0x` / `0X` prefix (e.g. `0xff`) |
+| `octal` | `Num a => Parser a` | Unsigned octal literal with `0o` / `0O` prefix (e.g. `0o17`) |
+| `binary` | `Num a => Parser a` | Unsigned binary literal with `0b` / `0B` prefix (e.g. `0b1010`) |
+
+> **Note:** All numeric parsers (`dec`, `int`, `hex`, `oct`, `bin`, `digs`,
+> `decimal`, `integer`, `hexidecimal`, `octal`, `binary`) are polymorphic
+> over `Num`. Specialize at the use site with a type annotation when the
+> surrounding context doesn't pin down the result type — e.g.
+> `parse (decimal :: Parser Integer) s` to avoid `Int` overflow on large
+> literals, or `parse (hexidecimal :: Parser Word64) s` for a specific
+> machine-width type. GHC defaults ambiguous `Num` constraints to `Integer`,
+> so an annotation is only needed when defaulting can't apply.
 | `symbol` | `Text -> Parser Text` | `token (string xs)` |
 | `character` | `Char -> Parser Char` | `token (char c)` |
 | `delimList` | `Char -> Parser a -> Parser [a]` | Parse a delimited list (e.g., comma-separated) |

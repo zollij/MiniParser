@@ -1,4 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
+-- The numeric parsers (dec/int/hex/oct/bin and friends) are polymorphic
+-- over Num. In this test module we rely on GHC's default-Integer for
+-- comparisons like `Right (42, " foo")` — that's intentional, not a bug,
+-- so we silence -Wtype-defaults here rather than annotating every test.
+{-# OPTIONS_GHC -Wno-type-defaults #-}
 
 module Main where
 
@@ -318,27 +323,29 @@ hunitTests = TestList
   -- int negative: "-42" is 3 chars
   , "pos: negative int" ~:
     getPosFromResult (parse int "-42rest") @?= Just (Pos 1 4)
+  -- Position tests don't compare values, so the polymorphic Num a parsers
+  -- need an explicit annotation to avoid defaulting warnings.
   -- hex base-level: "ff" is 2 chars -> col 3
   , "pos: hex" ~:
-    getPosFromResult (parse hex "ffrest") @?= Just (Pos 1 3)
+    getPosFromResult (parse (hex :: Parser Int) "ffrest") @?= Just (Pos 1 3)
   -- oct base-level: "777" is 3 chars
   , "pos: oct" ~:
-    getPosFromResult (parse oct "777rest") @?= Just (Pos 1 4)
+    getPosFromResult (parse (oct :: Parser Int) "777rest") @?= Just (Pos 1 4)
   -- bin base-level: "1010" is 4 chars
   , "pos: bin" ~:
-    getPosFromResult (parse bin "1010rest") @?= Just (Pos 1 5)
+    getPosFromResult (parse (bin :: Parser Int) "1010rest") @?= Just (Pos 1 5)
   -- hexidecimal: "0xff" is 4 chars -> col 5
   , "pos: hexidecimal" ~:
-    getPosFromResult (parse hexidecimal "0xff rest") @?= Just (Pos 1 5)
+    getPosFromResult (parse (hexidecimal :: Parser Int) "0xff rest") @?= Just (Pos 1 5)
   -- octal: "0o777" is 5 chars -> col 6
   , "pos: octal" ~:
-    getPosFromResult (parse octal "0o777rest") @?= Just (Pos 1 6)
+    getPosFromResult (parse (octal :: Parser Int) "0o777rest") @?= Just (Pos 1 6)
   -- binary: "0b1010" is 6 chars -> col 7
   , "pos: binary" ~:
-    getPosFromResult (parse binary "0b1010rest") @?= Just (Pos 1 7)
+    getPosFromResult (parse (binary :: Parser Int) "0b1010rest") @?= Just (Pos 1 7)
   -- hexidecimal with leading whitespace: "  0x10" consumes 6 chars -> col 7
   , "pos: hexidecimal with leading spaces" ~:
-    getPosFromResult (parse hexidecimal "  0x10") @?= Just (Pos 1 7)
+    getPosFromResult (parse (hexidecimal :: Parser Int) "  0x10") @?= Just (Pos 1 7)
   -- lookAhead does NOT advance position
   , "pos: lookAhead no advance" ~:
     getPosFromResult (parse lookAhead "hello") @?= Just (Pos 1 1)
@@ -503,68 +510,76 @@ prop_parseString_success target input =
         ti = T.pack input
     in stripPos (parse (string tt) ti) === Right (tt, T.drop (T.length tt) ti)
 
+-- Numeric parsers are polymorphic over Num, so properties need to fix a
+-- concrete type at the generator (or parser call) to avoid ambiguity.
 prop_parseNat_success :: Property
-prop_parseNat_success = forAll (choose (0, 999999)) $ \n ->
+prop_parseNat_success = forAll (choose (0, 999999 :: Int)) $ \n ->
   let str = T.pack (show n) in stripPos (parse dec str) === Right (n, T.empty)
 
 prop_parseInt_success :: Property
-prop_parseInt_success = forAll (choose (-999999, 999999)) $ \n ->
+prop_parseInt_success = forAll (choose (-999999, 999999 :: Int)) $ \n ->
   let str = T.pack (show n) in stripPos (parse int str) === Right (n, T.empty)
 
 -- Base-level round-trips: render N in base B, parse it, get N back.
 prop_parseHex_success :: Property
-prop_parseHex_success = forAll (choose (0, 0xFFFFFFFF)) $ \n ->
+prop_parseHex_success = forAll (choose (0, 0xFFFFFFFF :: Int)) $ \n ->
   let str = T.pack (showHex n "") in stripPos (parse hex str) === Right (n, T.empty)
 
 prop_parseOct_success :: Property
-prop_parseOct_success = forAll (choose (0, 0xFFFFFFFF)) $ \n ->
+prop_parseOct_success = forAll (choose (0, 0xFFFFFFFF :: Int)) $ \n ->
   let str = T.pack (showOct n "") in stripPos (parse oct str) === Right (n, T.empty)
 
 prop_parseBin_success :: Property
-prop_parseBin_success = forAll (choose (0, 0xFFFFFFFF)) $ \n ->
+prop_parseBin_success = forAll (choose (0, 0xFFFFFFFF :: Int)) $ \n ->
   let str = T.pack (showIntAtBase 2 intToDigit n "")
   in stripPos (parse bin str) === Right (n, T.empty)
 
 -- Prefixed variants
 prop_parseHexidecimal_success :: Property
-prop_parseHexidecimal_success = forAll (choose (0, 0xFFFFFFFF)) $ \n ->
+prop_parseHexidecimal_success = forAll (choose (0, 0xFFFFFFFF :: Int)) $ \n ->
   let str = T.pack ("0x" ++ showHex n "")
   in stripPos (parse hexidecimal str) === Right (n, T.empty)
 
 prop_parseOctal_success :: Property
-prop_parseOctal_success = forAll (choose (0, 0xFFFFFFFF)) $ \n ->
+prop_parseOctal_success = forAll (choose (0, 0xFFFFFFFF :: Int)) $ \n ->
   let str = T.pack ("0o" ++ showOct n "")
   in stripPos (parse octal str) === Right (n, T.empty)
 
 prop_parseBinary_success :: Property
-prop_parseBinary_success = forAll (choose (0, 0xFFFFFFFF)) $ \n ->
+prop_parseBinary_success = forAll (choose (0, 0xFFFFFFFF :: Int)) $ \n ->
   let str = T.pack ("0b" ++ showIntAtBase 2 intToDigit n "")
   in stripPos (parse binary str) === Right (n, T.empty)
+
+-- Integer round-trip: exercises the `Parser Integer` specialization.
+prop_parseHexidecimal_integer :: Property
+prop_parseHexidecimal_integer = forAll (choose (0, 2^(128 :: Int) :: Integer)) $ \n ->
+  let str = T.pack ("0x" ++ showHex n "")
+  in stripPos (parse hexidecimal str) === Right (n, T.empty)
 
 -- Failure: first char must be in the alphabet for each base.
 prop_parseHex_rejectNonHex :: Property
 prop_parseHex_rejectNonHex =
   forAll (suchThat arbitrary (\c -> not (isHexDigit c) && c /= '\NUL')) $ \c ->
-    parse hex (T.singleton c) == Left [Unexpected' [c]]
+    parse (hex :: Parser Int) (T.singleton c) == Left [Unexpected' [c]]
 
 prop_parseOct_reject8or9 :: Property
 prop_parseOct_reject8or9 = forAll (elements "89") $ \c ->
-  parse oct (T.singleton c) == Left [Unexpected' [c]]
+  parse (oct :: Parser Int) (T.singleton c) == Left [Unexpected' [c]]
 
 prop_parseOct_rejectNonOct :: Property
 prop_parseOct_rejectNonOct =
   forAll (suchThat arbitrary (\c -> not (isOctDigit c) && c /= '\NUL')) $ \c ->
-    parse oct (T.singleton c) == Left [Unexpected' [c]]
+    parse (oct :: Parser Int) (T.singleton c) == Left [Unexpected' [c]]
 
 prop_parseBin_rejectDigits2to9 :: Property
 prop_parseBin_rejectDigits2to9 = forAll (elements "23456789") $ \c ->
-  parse bin (T.singleton c) == Left [Unexpected' [c]]
+  parse (bin :: Parser Int) (T.singleton c) == Left [Unexpected' [c]]
 
 -- Trailing garbage: a valid prefix of hex digits followed by a non-hex char
 -- should parse the prefix and leave the rest in the stream.
 prop_parseHex_remainder :: Property
 prop_parseHex_remainder =
-  forAll (choose (0, 0xFFFF)) $ \n ->
+  forAll (choose (0, 0xFFFF :: Int)) $ \n ->
   forAll (suchThat arbitrary (\c -> not (isHexDigit c) && c /= '\NUL')) $ \c ->
     let str = T.pack (showHex n "" ++ [c])
     in stripPos (parse hex str) === Right (n, T.singleton c)
@@ -633,6 +648,7 @@ main = do
   quickCheck prop_parseHexidecimal_success
   quickCheck prop_parseOctal_success
   quickCheck prop_parseBinary_success
+  quickCheck prop_parseHexidecimal_integer
   quickCheck prop_parseHex_rejectNonHex
   quickCheck prop_parseOct_reject8or9
   quickCheck prop_parseOct_rejectNonOct

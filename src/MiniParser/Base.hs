@@ -202,40 +202,28 @@ ident = P $ \(PState pos inp) ->
       | otherwise -> Left [Unexpected' [c]]
 
 -- parse a decimal (base 10) number
-dec :: Parser Int
+-- Polymorphic over Num, so it can be specialized to Int, Integer, Word, etc.
+-- at the call site. A type annotation may be needed if the context doesn't
+-- pin down the result type: e.g. `parse (dec :: Parser Integer) "123"`.
+dec :: Num a => Parser a
 dec = digs isDigit 10
--- dec = P $ \(PState pos inp) ->
---   let
---     digs = T.takeWhile isDigit inp
---   in
---     if T.null digs
---     then case T.uncons inp of
---       Nothing -> Left [EndOfInput]
---       Just (c, _) -> Left [Unexpected' [c]]
---     else
---       let
---         -- Use Data.List.foldl' instead of T.foldl' (not available in MHS)
---         val  = foldl' (\acc c -> acc * 10 + digitToInt c) 0 (T.unpack digs)
---         ps   = PState (advanceText digs pos) (T.drop (T.length digs) inp)
---       in
---         Right (val, ps)
 
 -- parse a hexidecimal (base 16) number
 -- hex assumes we've already parsed the "0x"
-hex :: Parser Int
+hex :: Num a => Parser a
 hex = digs isHexDigit 16
 
-bin :: Parser Int
+bin :: Num a => Parser a
 bin = digs (\c -> c == '0' || c == '1') 2
 
-oct :: Parser Int
+oct :: Num a => Parser a
 oct = digs isOctDigit 8
 
 -- common digit string parser used by dec, hex and bin
 -- digs digTest pmult:
 --   digTest:  a (Char -> Bool) test for whether we found a digit
 --   pmult:    positional multiplier, 16 for hex, 10 for decimal, 8 for octal, 2 for binary
-digs :: (Char -> Bool) -> Int -> Parser Int
+digs :: Num a => (Char -> Bool) -> a -> Parser a
 digs digTest pmult = P $ \(PState pos inp) ->
   let
     ds = T.takeWhile digTest inp
@@ -247,17 +235,17 @@ digs digTest pmult = P $ \(PState pos inp) ->
     else
       let
         -- Use Data.List.foldl' instead of T.foldl' (not available in MHS)
-        val  = foldl' (\acc c -> acc * pmult + digitToInt c) 0 (T.unpack ds)
+        val  = foldl' (\acc c -> acc * pmult + fromIntegral (digitToInt c)) 0 (T.unpack ds)
         ps   = PState (advanceText ds pos) (T.drop (T.length ds) inp)
       in
         Right (val, ps)
 
 -- parse a signed decimal integer
-int :: Parser Int
+int :: Num a => Parser a
 int = do
   _ <- char '-'
   n <- dec
-  return (-n)
+  return (negate n)
   <|> dec
 
 -- handle whitespace characters: ' ','\n','\r','\t',etc.

@@ -37,16 +37,18 @@ token p = do
 identifier :: Parser T.Text
 identifier = token ident
 
--- parse an unsigned decimal (base 10) number
-decimal :: Parser Int
+-- parse an unsigned decimal (base 10) number.
+-- Polymorphic over Num; specialize at the call site via a type annotation
+-- when the context is ambiguous, e.g. `parse (decimal :: Parser Integer) s`.
+decimal :: Num a => Parser a
 decimal = token dec
 
 -- parse a signed decimal (base 10) number
-integer :: Parser Int
+integer :: Num a => Parser a
 integer = token int
 
 -- parse a hexidecimal (base 16) number; starting with "0x"
-hexidecimal :: Parser Int
+hexidecimal :: Num a => Parser a
 hexidecimal = do
   comments
   _ <- char '0'
@@ -54,7 +56,7 @@ hexidecimal = do
   hex
 
 -- parse an octal (base 8) number; starting with "0o"
-octal :: Parser Int
+octal :: Num a => Parser a
 octal = do
   comments
   _ <- char '0'
@@ -62,7 +64,7 @@ octal = do
   oct
 
 -- parse a binary (base 2) number; starting with "0b"
-binary :: Parser Int
+binary :: Num a => Parser a
 binary = do
   comments
   _ <- char '0'

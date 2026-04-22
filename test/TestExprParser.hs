@@ -1,4 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
+-- `decimal` is polymorphic over Num; a handful of ExprParser tests rely on
+-- GHC defaulting the result to Integer. Silence -Wtype-defaults so tests
+-- stay readable.
+{-# OPTIONS_GHC -Wno-type-defaults #-}
 
 module Main where
 

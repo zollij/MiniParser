@@ -1,5 +1,19 @@
 # Revision history for MiniParser
 
+## 0.3.0.0 -- 2026-04-22
+
+* **Breaking:** numeric parsers are now polymorphic over `Num`. `dec`, `int`,
+  `hex`, `oct`, `bin`, `digs`, `decimal`, `integer`, `hexidecimal`, `octal`,
+  and `binary` now have signatures like `Num a => Parser a` instead of being
+  hardcoded to `Parser Int`. Callers can specialize to `Integer` to avoid
+  overflow on large literals, or to `Int`/`Word`/etc. as needed. A type
+  annotation may be required if the surrounding context is ambiguous:
+  `parse (decimal :: Parser Integer) "123"`.
+* `digs` signature generalized to `Num a => (Char -> Bool) -> a -> Parser a`;
+  positional multiplier and result share the same numeric type.
+* Added an `Integer` round-trip QuickCheck property that exercises values
+  larger than `Int` can hold.
+
 ## 0.2.0.0 -- 2026-04-22
 
 * **Breaking:** renamed `nat` to `dec` and `natural` to `decimal` to make base
