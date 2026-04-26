@@ -9,10 +9,12 @@ module Main where
 import MiniParser.Base
 import MiniParser.Parser
 import MiniParser.ExprParser
-import TestHelpers (stripPos)
+import TestHelpers (stripPos, runHUnit, suiteHeader, summaryLine)
 import Test.HUnit
 import Control.Applicative ((<|>))
 import Data.Text (Text)
+import Data.Time.Clock (getCurrentTime, diffUTCTime)
+import System.Exit (exitFailure)
 
 -- ============================================================================
 -- Shared expression parser setup
@@ -493,9 +495,9 @@ tests = TestList
 
 main :: IO ()
 main = do
-  putStrLn "Running ExprParser tests..."
-  cnts <- runTestTT tests
-  putStrLn $ "\nExprParser Results: " ++ show cnts
-  if errors cnts + failures cnts > 0
-    then fail "Some ExprParser tests failed!"
-    else return ()
+  start <- getCurrentTime
+  suiteHeader "ExprParser tests"
+  (passed, failed) <- runHUnit tests
+  end <- getCurrentTime
+  summaryLine passed failed (diffUTCTime end start)
+  if failed > 0 then exitFailure else pure ()

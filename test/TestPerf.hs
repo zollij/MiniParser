@@ -8,7 +8,8 @@ module Main where
 
 import MiniParser.Base
 import MiniParser.Parser
-import TestHelpers (getPosFromResult, test, reportResults)
+import TestHelpers (getPosFromResult, test, reportResults,
+                    printResultLine, green, red, yellow)
 import qualified MiniParser.Comments.C as CC
 import Control.Applicative (Alternative(..), many)
 import Data.Char (isAlpha)
@@ -38,21 +39,23 @@ timeMs action = do
   let ms = fromIntegral (end - start) / 1e9 :: Double
   return (result, ms)
 
--- Run a test, return pass/fail
--- Run a timed test: parse must succeed and complete within maxMs
+-- Run a timed test: parse must succeed and complete within maxMs.
+-- Reports OK (green), SLOW (yellow, still passes), or FAIL (red, parse error).
+-- Output format matches the rest of the suite: name on the left, status
+-- right-aligned, with timing details trailing the status label.
 timedTest :: Show a => String -> Double -> (Text -> Either [Error] (a, Pos, Text)) -> Text -> IO Bool
 timedTest name maxMs parser input = do
   (result, ms) <- timeMs (return $! forceResult (parser input))
+  let detail = " (" ++ show (round ms :: Int) ++ "ms"
+            ++ ", limit " ++ show (round maxMs :: Int) ++ "ms"
+            ++ ", input " ++ show (T.length input) ++ " chars)"
   case result of
     Left errs -> do
-      putStrLn $ "  FAIL: " ++ name ++ " (parse error: " ++ show errs ++ ")"
+      printResultLine name (red "FAIL" ++ " (parse error: " ++ show errs ++ ")")
       return False
     Right _ -> do
-      let status = if ms <= maxMs then "OK" else "SLOW"
-      putStrLn $ "  " ++ status ++ ": " ++ name
-        ++ " (" ++ show (round ms :: Int) ++ "ms"
-        ++ ", limit " ++ show (round maxMs :: Int) ++ "ms"
-        ++ ", input " ++ show (T.length input) ++ " chars)"
+      let label = if ms <= maxMs then green "OK" else yellow "SLOW"
+      printResultLine name (label ++ detail)
       return (ms <= maxMs)
 
 -- Force evaluation of parse result to avoid lazy thunks in timing
@@ -248,8 +251,4 @@ main = do
 
   let allResults = concat [results1, results2, results3, results4,
                            results5, results6, results7, results8]
-  let total = length allResults
-  let passed = length (filter id allResults)
-  putStrLn ""
-  putStrLn $ "Results: " ++ show passed ++ "/" ++ show total ++ " passed"
   reportResults "performance" allResults

@@ -15,15 +15,15 @@ module MiniParser.Parser (
   -- Re-export everything from Base
   module MiniParser.Base,
   -- Higher-level parsers that use comments
-  token, identifier, decimal, integer, hexidecimal, octal, binary, symbol, character,
-  delimList, trim, row, splitLines, splitLinesT, digits,
-  letters
+  token, identifier, decimal, hexidecimal, octal, binary, signed,
+  symbol, character, delimList, trim, row, splitLines, splitLinesT,
+  digits, letters
 ) where
 
 import MiniParser.Base
 import MiniParser.Comments (comments)
 import Control.Applicative
-import Data.Char (isDigit, isAlpha)
+import Data.Char (isDigit, isAlpha, isSpace)
 import qualified Data.Text as T
 
 -- parse out a single token from the beginning of the Text stream.
@@ -42,10 +42,6 @@ identifier = token ident
 -- when the context is ambiguous, e.g. `parse (decimal :: Parser Integer) s`.
 decimal :: Num a => Parser a
 decimal = token dec
-
--- parse a signed decimal (base 10) number
-integer :: Num a => Parser a
-integer = token int
 
 -- parse a hexidecimal (base 16) number; starting with "0x"
 hexidecimal :: Num a => Parser a
@@ -71,9 +67,36 @@ binary = do
   _ <- char 'b' <|> char 'B'
   bin
 
+-- Combinator for a signed number.
+-- Strips leading whitespace and comments, then accepts an optional '-' or
+-- '+' that must be immediately followed (no whitespace) by the wrapped
+-- parser. So:
+--   * `signed decimal "  -42"`   -> -42    (whitespace before sign OK)
+--   * `signed decimal "-42"`     -> -42
+--   * `signed decimal "+42"`     ->  42    (explicit positive)
+--   * `signed decimal "42"`      ->  42    (sign optional)
+--   * `signed decimal "- 42"`    -> fails  (no whitespace between sign and digits)
+--   * `signed decimal "  - 42"`  -> fails  (still rejects mid-space)
+-- The same rules apply to `signed hexidecimal`, `signed octal`, and
+-- `signed binary`.
+signed :: Num a => Parser a -> Parser a
+signed p = comments *> (negative <|> positive <|> p)
+  where
+    negative = char '-' *> noSpaceAhead *> (negate <$> p)
+    positive = char '+' *> noSpaceAhead *> p
+
+-- After consuming a sign, require the next character to not be whitespace.
+-- Used by 'signed' to reject inputs like "- 42".
+noSpaceAhead :: Parser Char
+noSpaceAhead = do
+  c <- lookAhead
+  if isSpace c then empty else pure c
+
+-- parse a string symbol
 symbol :: T.Text -> Parser T.Text
 symbol xs = token (string xs)
 
+-- parse a character
 character :: Char -> Parser Char
 character = token . char
 

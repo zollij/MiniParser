@@ -16,7 +16,7 @@ name:               MiniParser
 -- PVP summary:     +-+------- breaking API changes
 --                  | | +----- non-breaking API additions
 --                  | | | +--- code changes with no API change
-version:            0.3.0.0
+version:            0.4.1.0
 
 -- A short (one-line) description of the package.
 synopsis:           Minimalist Text-based parser combinator library
@@ -82,18 +82,22 @@ test-suite MiniParser-test
     -- Base language which the package is written in.
     default-language: Haskell2010
 
-    other-modules:    TestHelpers
+    other-modules:    TestHelpers, PosTests
     type:             exitcode-stdio-1.0
     hs-source-dirs:   test
     main-is:          Test.hs
 
     -- Test dependencies.
+    -- HUnit/QuickCheck/time are required by the shared TestHelpers module
+    -- (colored runner, timed summary), so every test-suite that uses
+    -- TestHelpers depends on them.
     build-depends:
         base >= 4.15 && < 5,
         MiniParser,
         HUnit,
         QuickCheck,
-        text
+        text,
+        time
 
 test-suite comments-c-test
     import:           warnings
@@ -105,7 +109,10 @@ test-suite comments-c-test
     build-depends:
         base >= 4.15 && < 5,
         MiniParser,
-        text
+        HUnit,
+        QuickCheck,
+        text,
+        time
 
 test-suite comments-haskell-test
     import:           warnings
@@ -117,7 +124,10 @@ test-suite comments-haskell-test
     build-depends:
         base >= 4.15 && < 5,
         MiniParser,
-        text
+        HUnit,
+        QuickCheck,
+        text,
+        time
 
 test-suite comments-jack-test
     import:           warnings
@@ -129,7 +139,10 @@ test-suite comments-jack-test
     build-depends:
         base >= 4.15 && < 5,
         MiniParser,
-        text
+        HUnit,
+        QuickCheck,
+        text,
+        time
 
 test-suite comments-java-test
     import:           warnings
@@ -141,7 +154,10 @@ test-suite comments-java-test
     build-depends:
         base >= 4.15 && < 5,
         MiniParser,
-        text
+        HUnit,
+        QuickCheck,
+        text,
+        time
 
 test-suite comments-kotlin-test
     import:           warnings
@@ -153,7 +169,10 @@ test-suite comments-kotlin-test
     build-depends:
         base >= 4.15 && < 5,
         MiniParser,
-        text
+        HUnit,
+        QuickCheck,
+        text,
+        time
 
 test-suite expr-parser-test
     import:           warnings
@@ -166,7 +185,9 @@ test-suite expr-parser-test
         base >= 4.15 && < 5,
         MiniParser,
         HUnit,
-        text
+        QuickCheck,
+        text,
+        time
 
 test-suite perf-test
     import:           warnings
@@ -178,4 +199,7 @@ test-suite perf-test
     build-depends:
         base >= 4.15 && < 5,
         MiniParser,
-        text
+        HUnit,
+        QuickCheck,
+        text,
+        time

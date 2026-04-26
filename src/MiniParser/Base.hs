@@ -240,14 +240,6 @@ digs digTest pmult = P $ \(PState pos inp) ->
       in
         Right (val, ps)
 
--- parse a signed decimal integer
-int :: Num a => Parser a
-int = do
-  _ <- char '-'
-  n <- dec
-  return (negate n)
-  <|> dec
-
 -- handle whitespace characters: ' ','\n','\r','\t',etc.
 -- uses Data.Char.isSpace internally
 space :: Parser ()

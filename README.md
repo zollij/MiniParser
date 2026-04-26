@@ -72,9 +72,19 @@ main = do
   print $ parse (delimList ',' identifier) "foo, bar, baz"
   -- Right (["foo","bar","baz"],"")
 
-  -- Parse an integer
-  print $ parse integer "  -42 rest"
+  -- Parse a signed decimal number. `signed` strips leading whitespace
+  -- and comments, then accepts an optional '-' or '+' that must be
+  -- immediately followed by the digits (no space between sign and digits).
+  print $ parse (signed decimal) "  -42 rest"
   -- Right (-42," rest")
+
+  -- A space between the sign and the digits is rejected:
+  print $ parse (signed decimal) "- 42"
+  -- Left [...]
+
+  -- The same rules apply to signed hexidecimal/octal/binary:
+  print $ parse (signed hexidecimal) "  -0xff"
+  -- Right (-255,"")
 ```
 
 Note: The `OverloadedStrings` extension lets you write string literals that
@@ -155,7 +165,7 @@ There are 8 test suites defined in `MiniParser.cabal`:
 
 | Suite                    | File                   | Tests | Description |
 |--------------------------|------------------------|-------|-------------|
-| `MiniParser-test`        | `test/Test.hs`         | 225 HUnit + 37 QuickCheck | Core parser tests |
+| `MiniParser-test`        | `test/Test.hs`         | 271 HUnit + 45 QuickCheck | Core parser tests |
 | `expr-parser-test`       | `test/TestExprParser.hs` | 111 HUnit | Expression parser tests |
 | `comments-c-test`        | `examples/TestC.hs`    | 21   | C comment parser tests |
 | `comments-haskell-test`  | `examples/TestHaskell.hs` | 23 | Haskell comment parser tests |
@@ -239,7 +249,7 @@ comment handling for their project. See
 
 **`src/MiniParser/Parser.hs`** -- The main user-facing module. Re-exports
 everything from `Base` and adds higher-level parsers that depend on comments:
-`token`, `identifier`, `decimal`, `integer`, `hexidecimal`, `octal`, `binary`,
+`token`, `identifier`, `decimal`, `hexidecimal`, `octal`, `binary`, `signed`,
 `symbol`, `character`, `delimList`, `trim`, `row`, `splitLines`, `splitLinesT`.
 These parsers call `Comments.comments` to strip whitespace and comments before
 parsing.
@@ -473,7 +483,6 @@ These operate directly on input without stripping whitespace or comments.
 | `ident` | `Parser Text` | Parse a lowercase-starting identifier |
 | `identWith` | `[Char] -> Parser Text` | Parse an identifier with allowed special characters (e.g., `_`, `$`, `.`) |
 | `dec` | `Num a => Parser a` | Parse a decimal (base 10) number |
-| `int` | `Num a => Parser a` | Parse an integer, possibly negative |
 | `hex` | `Num a => Parser a` | Parse hex (base 16) digits (no `0x` prefix); accepts `0`-`9`, `a`-`f`, `A`-`F` |
 | `oct` | `Num a => Parser a` | Parse octal (base 8) digits (no `0o` prefix); accepts `0`-`7` |
 | `bin` | `Num a => Parser a` | Parse binary (base 2) digits (no `0b` prefix); accepts `0`-`1` |
@@ -491,19 +500,20 @@ before parsing.
 | `token` | `Parser a -> Parser a` | Strip comments/whitespace, then run parser |
 | `identifier` | `Parser Text` | `token ident` |
 | `decimal` | `Num a => Parser a` | `token dec` |
-| `integer` | `Num a => Parser a` | `token int` |
 | `hexidecimal` | `Num a => Parser a` | Unsigned hex literal with `0x` / `0X` prefix (e.g. `0xff`) |
 | `octal` | `Num a => Parser a` | Unsigned octal literal with `0o` / `0O` prefix (e.g. `0o17`) |
 | `binary` | `Num a => Parser a` | Unsigned binary literal with `0b` / `0B` prefix (e.g. `0b1010`) |
+| `signed` | `Num a => Parser a -> Parser a` | Wrap any numeric parser to accept an optional leading `-` (negate) or `+` (no-op) sign. Strips leading whitespace and comments before the sign; rejects whitespace between the sign and the digits. So `signed decimal "  -42"` succeeds, `signed decimal "- 42"` fails. The same rules apply to `signed hexidecimal`, `signed octal`, and `signed binary`. |
 
-> **Note:** All numeric parsers (`dec`, `int`, `hex`, `oct`, `bin`, `digs`,
-> `decimal`, `integer`, `hexidecimal`, `octal`, `binary`) are polymorphic
-> over `Num`. Specialize at the use site with a type annotation when the
-> surrounding context doesn't pin down the result type — e.g.
-> `parse (decimal :: Parser Integer) s` to avoid `Int` overflow on large
-> literals, or `parse (hexidecimal :: Parser Word64) s` for a specific
-> machine-width type. GHC defaults ambiguous `Num` constraints to `Integer`,
-> so an annotation is only needed when defaulting can't apply.
+> **Note:** All numeric parsers (`dec`, `hex`, `oct`, `bin`, `digs`,
+> `decimal`, `hexidecimal`, `octal`, `binary`) and the `signed` combinator
+> are polymorphic over `Num`. Specialize at the use site with a type
+> annotation when the surrounding context doesn't pin down the result type
+> — e.g. `parse (signed decimal :: Parser Integer) s` to avoid `Int`
+> overflow on large literals, or `parse (hexidecimal :: Parser Word64) s`
+> for a specific machine-width type. GHC defaults ambiguous `Num`
+> constraints to `Integer`, so an annotation is only needed when defaulting
+> can't apply.
 | `symbol` | `Text -> Parser Text` | `token (string xs)` |
 | `character` | `Char -> Parser Char` | `token (char c)` |
 | `delimList` | `Char -> Parser a -> Parser [a]` | Parse a delimited list (e.g., comma-separated) |

@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
--- The numeric parsers (dec/int/hex/oct/bin and friends) are polymorphic
--- over Num. In this test module we rely on GHC's default-Integer for
+-- The numeric parsers (dec/hex/oct/bin and friends) are polymorphic over
+-- Num. In this test module we rely on GHC's default-Integer for
 -- comparisons like `Right (42, " foo")` — that's intentional, not a bug,
 -- so we silence -Wtype-defaults here rather than annotating every test.
 {-# OPTIONS_GHC -Wno-type-defaults #-}
@@ -9,7 +9,9 @@ module Main where
 
 import MiniParser.Base
 import MiniParser.Parser
-import TestHelpers (stripPos, getPosFromResult)
+import TestHelpers (stripPos, runHUnit, runQC,
+                    suiteHeader, sectionHeader, summaryLine)
+import PosTests (posTests)
 import Test.HUnit
 import Test.QuickCheck
 import Data.Char (isDigit, isAlpha, isAlphaNum, isLower, isUpper, isHexDigit, isOctDigit, intToDigit)
@@ -17,12 +19,14 @@ import Control.Applicative (Alternative(..), many)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Numeric (showHex, showOct, showIntAtBase)
+import Data.Time.Clock (getCurrentTime, diffUTCTime)
+import System.Exit (exitFailure)
 
 -- HUnit tests for specific parser behavior, positive and negative
 hunitTests :: Test
-hunitTests = TestList
-  -- EXISTING TESTS (from original Test.hs)
-  [ "parse item success" ~: stripPos (parse item "abc") ~?= Right ('a', "bc")
+hunitTests = TestList $ concat
+  [ -- EXISTING TESTS (from original Test.hs)
+    [ "parse item success" ~: stripPos (parse item "abc") ~?= Right ('a', "bc")
   , "parse item failure (empty)" ~: parse item "" ~?= Left [EndOfInput]
   , "parse digit success" ~: stripPos (parse digit "5xyz") ~?= Right ('5', "xyz")
   , "parse digit failure (non-digit)" ~: parse digit "abc" ~?= Left [Unexpected' "a"]
@@ -35,9 +39,6 @@ hunitTests = TestList
   , "parse decimal success" ~: stripPos (parse decimal "42 foo") ~?= Right (42, " foo")
   , "parse decimal failure (non-digit start)" ~: parse decimal "abc" ~?= Left [Unexpected' "a"]
   , "parse decimal failure (empty)" ~: parse decimal "" ~?= Left [EndOfInput]
-  , "parse integer success (positive)" ~: stripPos (parse integer "42 foo") ~?= Right (42, " foo")
-  , "parse integer success (negative)" ~: stripPos (parse integer "-42 foo") ~?= Right (-42, " foo")
-  , "parse integer failure (dash only)" ~: parse integer "- foo" ~?= Left [Unexpected' "-"]
   , "parse string success" ~: stripPos (parse (string "foo") "foobar") ~?= Right ("foo", "bar")
   , "parse string failure" ~: parse (string "foo") "bar" ~?= Left [Unexpected "foo" "bar"]
   , "parse char success" ~: stripPos (parse (char 'x') "xyz") ~?= Right ('x', "yz")
@@ -83,11 +84,9 @@ hunitTests = TestList
   , "parse dec success" ~: stripPos (parse dec "123") ~?= Right (123, "")
   , "parse dec success with remainder" ~: stripPos (parse dec "456abc") ~?= Right (456, "abc")
   , "parse dec failure (no digits)" ~: parse dec "abc" ~?= Left [Unexpected' "a"]
-  , "parse int success (positive)" ~: stripPos (parse int "123") ~?= Right (123, "")
-  , "parse int success (negative)" ~: stripPos (parse int "-456") ~?= Right (-456, "")
-  , "parse int failure (invalid negative)" ~: parse int "-abc" ~?= Left [Unexpected' "-"]
-  -- Base-level hex (no prefix)
-  , "parse hex success (single digit)" ~: stripPos (parse hex "0") ~?= Right (0, "")
+    ]
+  , -- Base-level hex (no prefix)
+    [ "parse hex success (single digit)" ~: stripPos (parse hex "0") ~?= Right (0, "")
   , "parse hex success (lower f)" ~: stripPos (parse hex "f") ~?= Right (15, "")
   , "parse hex success (upper F)" ~: stripPos (parse hex "F") ~?= Right (15, "")
   , "parse hex success (ff)" ~: stripPos (parse hex "ff") ~?= Right (255, "")
@@ -190,9 +189,10 @@ hunitTests = TestList
   , "parse binary failure (prefix then EOF)" ~: parse binary "0b" ~?= Left [EndOfInput]
   , "parse binary failure (prefix then '2')" ~: parse binary "0b2" ~?= Left [Unexpected' "2"]
   , "parse binary failure (wrong prefix letter)" ~: parse binary "0c1" ~?= Left [Unexpected' "c"]
-  -- Backtracking with <|>: if the first branch consumes the '0' and fails,
-  -- the second branch must still see the original input.
-  , "hexidecimal <|> decimal picks decimal for '42'" ~:
+    ]
+  , -- Backtracking with <|>: if the first branch consumes the '0' and fails,
+    -- the second branch must still see the original input.
+    [ "hexidecimal <|> decimal picks decimal for '42'" ~:
     stripPos (parse (hexidecimal <|> decimal) "42") ~?= Right (42, "")
   , "hexidecimal <|> decimal picks hex for '0x1A'" ~:
     stripPos (parse (hexidecimal <|> decimal) "0x1A") ~?= Right (26, "")
@@ -208,8 +208,152 @@ hunitTests = TestList
     stripPos (parse (binary <|> octal <|> hexidecimal <|> decimal) "10") ~?= Right (10, "")
   , "prefix cascade falls through to decimal for '010'" ~:
     stripPos (parse (binary <|> octal <|> hexidecimal <|> decimal) "010") ~?= Right (10, "")
-  -- Look ahead parsers
-  , "parse lookAheadMulti success" ~: stripPos (parse (lookAheadMulti 3) "hello") ~?= Right ("hel", "hello")
+  -- signed combinator with decimal
+  , "signed decimal: unsigned positive" ~:
+    stripPos (parse (signed decimal) "42") ~?= Right (42, "")
+  , "signed decimal: explicit negative" ~:
+    stripPos (parse (signed decimal) "-42") ~?= Right (-42, "")
+  , "signed decimal: explicit positive" ~:
+    stripPos (parse (signed decimal) "+42") ~?= Right (42, "")
+  -- 'signed' strips leading whitespace/comments BEFORE the sign, and
+  -- requires the digits to follow the sign with no intervening space.
+  , "signed decimal: leading whitespace, unsigned" ~:
+    stripPos (parse (signed decimal) "  42") ~?= Right (42, "")
+  , "signed decimal: leading whitespace, negative" ~:
+    stripPos (parse (signed decimal) "  -42") ~?= Right (-42, "")
+  , "signed decimal: leading whitespace, explicit positive" ~:
+    stripPos (parse (signed decimal) "  +42") ~?= Right (42, "")
+  , "signed decimal: leading line comment then negative" ~:
+    stripPos (parse (signed decimal) "-- skip\n-42") ~?= Right (-42, "")
+  , "signed decimal: leading block comment then positive" ~:
+    stripPos (parse (signed decimal) "{- skip -}+42") ~?= Right (42, "")
+  -- Strict: no whitespace permitted between the sign and the digits.
+  , "signed decimal failure: space between negative sign and digits" ~:
+    case parse (signed decimal) ("- 42" :: Text) of
+      Left errs -> assertBool "Should have errors" (not $ null errs)
+      Right _ -> assertFailure "Should have failed"
+  , "signed decimal failure: space between positive sign and digits" ~:
+    case parse (signed decimal) ("+ 42" :: Text) of
+      Left errs -> assertBool "Should have errors" (not $ null errs)
+      Right _ -> assertFailure "Should have failed"
+  , "signed decimal failure: leading WS then sign then space" ~:
+    case parse (signed decimal) ("  - 42" :: Text) of
+      Left errs -> assertBool "Should have errors" (not $ null errs)
+      Right _ -> assertFailure "Should have failed"
+  -- 'signed' applied to the raw 'dec' parser behaves the same way: leading
+  -- whitespace is OK (signed strips it), but space between sign and digits
+  -- is rejected (the lookahead inside signed catches it).
+  , "signed dec: leading whitespace, negative" ~:
+    stripPos (parse (signed dec) "  -42") ~?= Right (-42, "")
+  , "signed dec failure: space between negative sign and digits (raw)" ~:
+    case parse (signed dec) ("- 42" :: Text) of
+      Left errs -> assertBool "Should have errors" (not $ null errs)
+      Right _ -> assertFailure "Should have failed"
+  , "signed dec failure: space between positive sign and digits (raw)" ~:
+    case parse (signed dec) ("+ 42" :: Text) of
+      Left errs -> assertBool "Should have errors" (not $ null errs)
+      Right _ -> assertFailure "Should have failed"
+  , "signed decimal: trailing remainder preserved" ~:
+    stripPos (parse (signed decimal) "-42 rest") ~?= Right (-42, " rest")
+  , "signed decimal: zero" ~:
+    stripPos (parse (signed decimal) "0") ~?= Right (0, "")
+  , "signed decimal: -0 round-trips to 0" ~:
+    stripPos (parse (signed decimal) "-0") ~?= Right (0, "")
+  -- signed combinator failure cases
+  , "signed decimal failure (empty)" ~:
+    parse (signed decimal) "" ~?= Left [EndOfInput]
+  , "signed decimal failure (sign with no digits)" ~:
+    case parse (signed decimal) ("-" :: Text) of
+      Left errs -> assertBool "Should have errors" (not $ null errs)
+      Right _ -> assertFailure "Should have failed"
+  , "signed decimal failure (non-digit)" ~:
+    case parse (signed decimal) ("abc" :: Text) of
+      Left errs -> assertBool "Should have errors" (not $ null errs)
+      Right _ -> assertFailure "Should have failed"
+  , "signed decimal failure (sign then non-digit)" ~:
+    case parse (signed decimal) ("-abc" :: Text) of
+      Left errs -> assertBool "Should have errors" (not $ null errs)
+      Right _ -> assertFailure "Should have failed"
+  , "signed decimal failure (double negative)" ~:
+    case parse (signed decimal) ("--42" :: Text) of
+      Left errs -> assertBool "Should have errors" (not $ null errs)
+      Right _ -> assertFailure "Should have failed"
+  , "signed decimal failure (mixed signs)" ~:
+    case parse (signed decimal) ("+-42" :: Text) of
+      Left errs -> assertBool "Should have errors" (not $ null errs)
+      Right _ -> assertFailure "Should have failed"
+    ]
+  , -- signed is polymorphic; works with the other base parsers too.
+    -- For each base, exercise: bare positive, '-' negative, '+' explicit
+    -- positive, and at least one larger value matching real-world inputs.
+    [ "signed hexidecimal: positive" ~:
+    stripPos (parse (signed hexidecimal) "0xff") ~?= Right (255, "")
+  , "signed hexidecimal: negative" ~:
+    stripPos (parse (signed hexidecimal) "-0xff") ~?= Right (-255, "")
+  , "signed hexidecimal: explicit positive" ~:
+    stripPos (parse (signed hexidecimal) "+0x10") ~?= Right (16, "")
+  , "signed hexidecimal: -0xfed1" ~:
+    stripPos (parse (signed hexidecimal) "-0xfed1") ~?= Right (-0xfed1, "")
+  , "signed hexidecimal: +0xFED1 (explicit, mixed case)" ~:
+    stripPos (parse (signed hexidecimal) "+0xFED1") ~?= Right (0xfed1, "")
+  , "signed octal: positive (no sign)" ~:
+    stripPos (parse (signed octal) "0o17") ~?= Right (15, "")
+  , "signed octal: negative" ~:
+    stripPos (parse (signed octal) "-0o17") ~?= Right (-15, "")
+  , "signed octal: explicit positive" ~:
+    stripPos (parse (signed octal) "+0o17") ~?= Right (15, "")
+  , "signed octal: +0o7541647" ~:
+    stripPos (parse (signed octal) "+0o7541647") ~?= Right (2016167, "")
+  , "signed octal: -0o7541647" ~:
+    stripPos (parse (signed octal) "-0o7541647") ~?= Right (-2016167, "")
+  , "signed binary: positive without prefix sign" ~:
+    stripPos (parse (signed binary) "0b101") ~?= Right (5, "")
+  , "signed binary: negative" ~:
+    stripPos (parse (signed binary) "-0b1010") ~?= Right (-10, "")
+  , "signed binary: explicit positive" ~:
+    stripPos (parse (signed binary) "+0b1010") ~?= Right (10, "")
+  , "signed binary: -0b10001010001" ~:
+    stripPos (parse (signed binary) "-0b10001010001") ~?= Right (-1105, "")
+  , "signed binary: +0b10001010001" ~:
+    stripPos (parse (signed binary) "+0b10001010001") ~?= Right (1105, "")
+  -- Leading whitespace before the sign is allowed for every base.
+  , "signed hexidecimal: leading WS, negative '  -0xfed1'" ~:
+    stripPos (parse (signed hexidecimal) "  -0xfed1") ~?= Right (-0xfed1, "")
+  , "signed hexidecimal: leading WS, explicit positive '  +0xff'" ~:
+    stripPos (parse (signed hexidecimal) "  +0xff") ~?= Right (255, "")
+  , "signed octal: leading WS, negative '  -0o17'" ~:
+    stripPos (parse (signed octal) "  -0o17") ~?= Right (-15, "")
+  , "signed octal: leading WS, explicit positive '  +0o17'" ~:
+    stripPos (parse (signed octal) "  +0o17") ~?= Right (15, "")
+  , "signed binary: leading WS, negative '  -0b1010'" ~:
+    stripPos (parse (signed binary) "  -0b1010") ~?= Right (-10, "")
+  , "signed binary: leading WS, explicit positive '  +0b1010'" ~:
+    stripPos (parse (signed binary) "  +0b1010") ~?= Right (10, "")
+  -- Space between sign and digits is rejected for every base.
+  , "signed hexidecimal failure: space between sign and digits '- 0xff'" ~:
+    case parse (signed hexidecimal) ("- 0xff" :: Text) of
+      Left errs -> assertBool "Should have errors" (not $ null errs)
+      Right _ -> assertFailure "Should have failed"
+  , "signed hexidecimal failure: leading WS then sign then space '  - 0xff'" ~:
+    case parse (signed hexidecimal) ("  - 0xff" :: Text) of
+      Left errs -> assertBool "Should have errors" (not $ null errs)
+      Right _ -> assertFailure "Should have failed"
+  , "signed octal failure: space between sign and digits '- 0o17'" ~:
+    case parse (signed octal) ("- 0o17" :: Text) of
+      Left errs -> assertBool "Should have errors" (not $ null errs)
+      Right _ -> assertFailure "Should have failed"
+  , "signed binary failure: space between sign and digits '- 0b1010'" ~:
+    case parse (signed binary) ("- 0b1010" :: Text) of
+      Left errs -> assertBool "Should have errors" (not $ null errs)
+      Right _ -> assertFailure "Should have failed"
+  -- signed across a prefix cascade
+  , "signed cascade picks negative hex" ~:
+    stripPos (parse (signed (binary <|> octal <|> hexidecimal <|> decimal)) "-0x10") ~?= Right (-16, "")
+  , "signed cascade picks negative decimal fallback" ~:
+    stripPos (parse (signed (binary <|> octal <|> hexidecimal <|> decimal)) "-42") ~?= Right (-42, "")
+    ]
+  , -- Look ahead parsers
+    [ "parse lookAheadMulti success" ~: stripPos (parse (lookAheadMulti 3) "hello") ~?= Right ("hel", "hello")
   , "parse lookAheadMulti exact length" ~: stripPos (parse (lookAheadMulti 5) "hello") ~?= Right ("hello", "hello")
   , "parse lookAheadMulti failure (too short)" ~: parse (lookAheadMulti 10) "hello" ~?= Left [EndOfInput]
   , "parse lookAheadMulti empty input" ~: parse (lookAheadMulti 1) "" ~?= Left [EndOfInput]
@@ -290,111 +434,10 @@ hunitTests = TestList
   -- Error handling
   , "errorsToString test" ~:
     errorsToString [EndOfInput, CustomError "test"] @?= "EndOfInput CustomError \"test\""
-
-  -- =====================================================================
-  -- Position tracking tests
-  -- initPos is Pos 1 1, advancePos increments col, newline resets to next line col 1
-  -- =====================================================================
-
-  -- Single character: starts at Pos 1 1, after consuming 'a' -> Pos 1 2
-  , "pos: single char" ~:
-    getPosFromResult (parse item "abc") @?= Just (Pos 1 2)
-  -- Three characters on one line
-  , "pos: three chars" ~:
-    getPosFromResult (parse (do _ <- item; _ <- item; item) "abc") @?= Just (Pos 1 4)
-  -- String match advances by length
-  , "pos: string" ~:
-    getPosFromResult (parse (string "hello") "helloworld") @?= Just (Pos 1 6)
-  -- Newline advances to next line
-  , "pos: newline" ~:
-    getPosFromResult (parse (do _ <- item; item) "a\nb") @?= Just (Pos 2 1)
-  -- Multiple newlines: \n -> Pos 2 1, \n -> Pos 3 1, 'c' -> Pos 3 2
-  , "pos: multiple newlines" ~:
-    getPosFromResult (parse (do _ <- item; _ <- item; item) "\n\nc") @?= Just (Pos 3 2)
-  -- Mixed content across lines: 'a'->col 2, 'b'->col 3, \n->Pos 2 1, 'c'->col 2, 'd'->col 3
-  , "pos: mixed lines" ~:
-    getPosFromResult (parse (string "ab\ncd") "ab\ncdef") @?= Just (Pos 2 3)
-  -- ident position: "foo" is 3 chars on line 1
-  , "pos: ident" ~:
-    getPosFromResult (parse ident "foo rest") @?= Just (Pos 1 4)
-  -- dec position: "123" is 3 chars
-  , "pos: dec" ~:
-    getPosFromResult (parse dec "123rest") @?= Just (Pos 1 4)
-  -- int negative: "-42" is 3 chars
-  , "pos: negative int" ~:
-    getPosFromResult (parse int "-42rest") @?= Just (Pos 1 4)
-  -- Position tests don't compare values, so the polymorphic Num a parsers
-  -- need an explicit annotation to avoid defaulting warnings.
-  -- hex base-level: "ff" is 2 chars -> col 3
-  , "pos: hex" ~:
-    getPosFromResult (parse (hex :: Parser Int) "ffrest") @?= Just (Pos 1 3)
-  -- oct base-level: "777" is 3 chars
-  , "pos: oct" ~:
-    getPosFromResult (parse (oct :: Parser Int) "777rest") @?= Just (Pos 1 4)
-  -- bin base-level: "1010" is 4 chars
-  , "pos: bin" ~:
-    getPosFromResult (parse (bin :: Parser Int) "1010rest") @?= Just (Pos 1 5)
-  -- hexidecimal: "0xff" is 4 chars -> col 5
-  , "pos: hexidecimal" ~:
-    getPosFromResult (parse (hexidecimal :: Parser Int) "0xff rest") @?= Just (Pos 1 5)
-  -- octal: "0o777" is 5 chars -> col 6
-  , "pos: octal" ~:
-    getPosFromResult (parse (octal :: Parser Int) "0o777rest") @?= Just (Pos 1 6)
-  -- binary: "0b1010" is 6 chars -> col 7
-  , "pos: binary" ~:
-    getPosFromResult (parse (binary :: Parser Int) "0b1010rest") @?= Just (Pos 1 7)
-  -- hexidecimal with leading whitespace: "  0x10" consumes 6 chars -> col 7
-  , "pos: hexidecimal with leading spaces" ~:
-    getPosFromResult (parse (hexidecimal :: Parser Int) "  0x10") @?= Just (Pos 1 7)
-  -- lookAhead does NOT advance position
-  , "pos: lookAhead no advance" ~:
-    getPosFromResult (parse lookAhead "hello") @?= Just (Pos 1 1)
-  -- lookAheadMulti does NOT advance position
-  , "pos: lookAheadMulti no advance" ~:
-    getPosFromResult (parse (lookAheadMulti 3) "hello") @?= Just (Pos 1 1)
-  -- pTakeWhile advances by consumed chars
-  , "pos: pTakeWhile" ~:
-    getPosFromResult (parse (pTakeWhile isDigit) "123abc") @?= Just (Pos 1 4)
-  -- pTakeWhile no match: position unchanged
-  , "pos: pTakeWhile no match" ~:
-    getPosFromResult (parse (pTakeWhile isDigit) "abc") @?= Just (Pos 1 1)
-  -- takeUntil advances by chars before delimiter
-  , "pos: takeUntil" ~:
-    getPosFromResult (parse (takeUntil '#') "foo#bar") @?= Just (Pos 1 4)
-  -- takeUntil' advances past delimiter too
-  , "pos: takeUntil'" ~:
-    getPosFromResult (parse (takeUntil' '#') "foo#bar") @?= Just (Pos 1 5)
-  -- takeUntilStr advances by chars before needle
-  , "pos: takeUntilStr" ~:
-    getPosFromResult (parse (takeUntilStr "end") "startendfinish") @?= Just (Pos 1 6)
-  -- takeUntilStr' advances past needle
-  , "pos: takeUntilStr'" ~:
-    getPosFromResult (parse (takeUntilStr' "end") "startendfinish") @?= Just (Pos 1 9)
-  -- space advances through whitespace
-  , "pos: space" ~:
-    getPosFromResult (parse space "   abc") @?= Just (Pos 1 4)
-  -- space with newline: ' '->col 2, ' '->col 3, \n->Pos 2 1, ' '->col 2, ' '->col 3
-  , "pos: space with newline" ~:
-    getPosFromResult (parse space "  \n  abc") @?= Just (Pos 2 3)
-  -- eof at empty input: position unchanged
-  , "pos: eof" ~:
-    getPosFromResult (parse eof "") @?= Just (Pos 1 1)
-  -- takeAll consumes everything: 'a'->col 2, 'b'->col 3, \n->Pos 2 1, 'c'->col 2, 'd'->col 3
-  , "pos: takeAll" ~:
-    getPosFromResult (parse takeAll "ab\ncd") @?= Just (Pos 2 3)
-  -- takeUntilEOL stops before newline
-  , "pos: takeUntilEOL" ~:
-    getPosFromResult (parse takeUntilEOL "hello\nworld") @?= Just (Pos 1 6)
-  -- takeUntilEOL' consumes past newline
-  , "pos: takeUntilEOL'" ~:
-    getPosFromResult (parse takeUntilEOL' "hello\nworld") @?= Just (Pos 2 1)
-  -- Sequential parsers accumulate position: "ab"->Pos 1 3, \n->Pos 2 1, "cd"->Pos 2 3
-  , "pos: sequential across newline" ~:
-    getPosFromResult (parse (do _ <- string "ab"; _ <- item; string "cd") "ab\ncdef") @?= Just (Pos 2 3)
-  -- Multi-line string
-  , "pos: multi-line string parse" ~:
-    getPosFromResult (parse (do _ <- takeUntilEOL'; _ <- takeUntilEOL'; takeUntilEOL')
-      "line1\nline2\nline3\n") @?= Just (Pos 4 1)
+    ]
+  -- Position tracking tests live in PosTests (separate module) so that
+  -- mhs's toplevel compile pass doesn't overflow on a single huge module.
+  , posTests
   ]
 
 -- QuickCheck properties for positive cases
@@ -516,9 +559,55 @@ prop_parseNat_success :: Property
 prop_parseNat_success = forAll (choose (0, 999999 :: Int)) $ \n ->
   let str = T.pack (show n) in stripPos (parse dec str) === Right (n, T.empty)
 
-prop_parseInt_success :: Property
-prop_parseInt_success = forAll (choose (-999999, 999999 :: Int)) $ \n ->
-  let str = T.pack (show n) in stripPos (parse int str) === Right (n, T.empty)
+-- `signed decimal` should round-trip any Int via `show` (which renders
+-- negatives with a leading '-' and non-negatives bare).
+prop_signedDecimal_success :: Property
+prop_signedDecimal_success = forAll (choose (-999999, 999999 :: Int)) $ \n ->
+  let str = T.pack (show n)
+  in stripPos (parse (signed decimal) str) === Right (n, T.empty)
+
+-- An explicit '+' prefix is also accepted and yields the same value.
+prop_signedDecimal_explicitPlus :: Property
+prop_signedDecimal_explicitPlus = forAll (choose (0, 999999 :: Int)) $ \n ->
+  let str = T.pack ('+' : show n)
+  in stripPos (parse (signed decimal) str) === Right (n, T.empty)
+
+-- `signed` composes with other base parsers. Each property generates a
+-- random Int, renders it in its base with a "0x"/"0o"/"0b" prefix, and
+-- prepends '-' for negatives and '+' for some positives, then round-trips.
+prop_signedHex_success :: Property
+prop_signedHex_success = forAll (choose (-0xFFFFFFFF, 0xFFFFFFFF :: Int)) $ \n ->
+  let body = T.pack ("0x" ++ showHex (abs n) "")
+      str  = if n < 0 then T.cons '-' body else body
+  in stripPos (parse (signed hexidecimal) str) === Right (n, T.empty)
+
+prop_signedOct_success :: Property
+prop_signedOct_success = forAll (choose (-0xFFFFFFFF, 0xFFFFFFFF :: Int)) $ \n ->
+  let body = T.pack ("0o" ++ showOct (abs n) "")
+      str  = if n < 0 then T.cons '-' body else body
+  in stripPos (parse (signed octal) str) === Right (n, T.empty)
+
+prop_signedBin_success :: Property
+prop_signedBin_success = forAll (choose (-0xFFFFFFFF, 0xFFFFFFFF :: Int)) $ \n ->
+  let body = T.pack ("0b" ++ showIntAtBase 2 intToDigit (abs n) "")
+      str  = if n < 0 then T.cons '-' body else body
+  in stripPos (parse (signed binary) str) === Right (n, T.empty)
+
+-- Explicit '+' prefix round-trip on each base (only non-negative values).
+prop_signedHex_explicitPlus :: Property
+prop_signedHex_explicitPlus = forAll (choose (0, 0xFFFFFFFF :: Int)) $ \n ->
+  let str = T.pack ("+0x" ++ showHex n "")
+  in stripPos (parse (signed hexidecimal) str) === Right (n, T.empty)
+
+prop_signedOct_explicitPlus :: Property
+prop_signedOct_explicitPlus = forAll (choose (0, 0xFFFFFFFF :: Int)) $ \n ->
+  let str = T.pack ("+0o" ++ showOct n "")
+  in stripPos (parse (signed octal) str) === Right (n, T.empty)
+
+prop_signedBin_explicitPlus :: Property
+prop_signedBin_explicitPlus = forAll (choose (0, 0xFFFFFFFF :: Int)) $ \n ->
+  let str = T.pack ("+0b" ++ showIntAtBase 2 intToDigit n "")
+  in stripPos (parse (signed binary) str) === Right (n, T.empty)
 
 -- Base-level round-trips: render N in base B, parse it, get N back.
 prop_parseHex_success :: Property
@@ -592,70 +681,97 @@ prop_choice_success = forAll (elements ["foo", "bar", "baz"]) $ \target ->
 
 main :: IO ()
 main = do
-  putStrLn "Running Enhanced HUnit tests..."
-  cnts <- runTestTT hunitTests
-  putStrLn $ "\nHUnit Results: " ++ show cnts
+  start <- getCurrentTime
 
-  putStrLn "\nRunning QuickCheck tests..."
+  suiteHeader "MiniParser core tests"
+  (hp, hf) <- runHUnit hunitTests
 
-  putStrLn "Testing basic parsers..."
-  quickCheck prop_parseItem_nonEmpty
-  quickCheck prop_parseItem_empty
+  suiteHeader "QuickCheck properties"
 
-  putStrLn "Testing character parsers..."
-  quickCheck prop_parseDigit_success
-  quickCheck prop_parseDigit_failure
-  quickCheck prop_parseLetter_success
-  quickCheck prop_parseLetter_failure
-  quickCheck prop_parseAlphanum_success
-  quickCheck prop_parseAlphanum_failure
-  quickCheck prop_parseLower_success
-  quickCheck prop_parseLower_failure
-  quickCheck prop_parseUpper_success
-  quickCheck prop_parseUpper_failure
+  sectionHeader "Basic parsers"
+  qc1 <- mapM (uncurry runQC)
+    [ ("prop_parseItem_nonEmpty",       property prop_parseItem_nonEmpty)
+    , ("prop_parseItem_empty",          property prop_parseItem_empty)
+    ]
 
-  putStrLn "Testing lookAhead..."
-  quickCheck prop_parseLookAhead_nonEmpty
-  quickCheck prop_parseLookAhead_empty
+  sectionHeader "Character parsers"
+  qc2 <- mapM (uncurry runQC)
+    [ ("prop_parseDigit_success",       property prop_parseDigit_success)
+    , ("prop_parseDigit_failure",       property prop_parseDigit_failure)
+    , ("prop_parseLetter_success",      property prop_parseLetter_success)
+    , ("prop_parseLetter_failure",      property prop_parseLetter_failure)
+    , ("prop_parseAlphanum_success",    property prop_parseAlphanum_success)
+    , ("prop_parseAlphanum_failure",    property prop_parseAlphanum_failure)
+    , ("prop_parseLower_success",       property prop_parseLower_success)
+    , ("prop_parseLower_failure",       property prop_parseLower_failure)
+    , ("prop_parseUpper_success",       property prop_parseUpper_success)
+    , ("prop_parseUpper_failure",       property prop_parseUpper_failure)
+    ]
 
-  putStrLn "Testing takeUntil..."
-  quickCheck prop_parseTakeUntil_success
-  quickCheck prop_parseTakeUntil_failure
-  quickCheck prop_parseTakeUntil'_success
-  quickCheck prop_parseTakeUntil'_failure
+  sectionHeader "lookAhead"
+  qc3 <- mapM (uncurry runQC)
+    [ ("prop_parseLookAhead_nonEmpty",  property prop_parseLookAhead_nonEmpty)
+    , ("prop_parseLookAhead_empty",     property prop_parseLookAhead_empty)
+    ]
 
-  putStrLn "Testing pTakeWhile..."
-  quickCheck prop_parseTakeWhile
+  sectionHeader "takeUntil"
+  qc4 <- mapM (uncurry runQC)
+    [ ("prop_parseTakeUntil_success",   property prop_parseTakeUntil_success)
+    , ("prop_parseTakeUntil_failure",   property prop_parseTakeUntil_failure)
+    , ("prop_parseTakeUntil'_success",  property prop_parseTakeUntil'_success)
+    , ("prop_parseTakeUntil'_failure",  property prop_parseTakeUntil'_failure)
+    ]
 
-  putStrLn "Testing takeAll..."
-  quickCheck prop_takeAll
+  sectionHeader "pTakeWhile / takeAll / EOF / string"
+  qc5 <- mapM (uncurry runQC)
+    [ ("prop_parseTakeWhile",           property prop_parseTakeWhile)
+    , ("prop_takeAll",                  property prop_takeAll)
+    , ("prop_parseEOF_success",         property prop_parseEOF_success)
+    , ("prop_parseEOF_failure",         property prop_parseEOF_failure)
+    , ("prop_parseString_success",      property prop_parseString_success)
+    ]
 
-  putStrLn "Testing EOF..."
-  quickCheck prop_parseEOF_success
-  quickCheck prop_parseEOF_failure
+  sectionHeader "Number parsing (decimal / signed)"
+  qc6 <- mapM (uncurry runQC)
+    [ ("prop_parseNat_success",            property prop_parseNat_success)
+    , ("prop_signedDecimal_success",       property prop_signedDecimal_success)
+    , ("prop_signedDecimal_explicitPlus",  property prop_signedDecimal_explicitPlus)
+    , ("prop_signedHex_success",           property prop_signedHex_success)
+    , ("prop_signedOct_success",           property prop_signedOct_success)
+    , ("prop_signedBin_success",           property prop_signedBin_success)
+    , ("prop_signedHex_explicitPlus",      property prop_signedHex_explicitPlus)
+    , ("prop_signedOct_explicitPlus",      property prop_signedOct_explicitPlus)
+    , ("prop_signedBin_explicitPlus",      property prop_signedBin_explicitPlus)
+    ]
 
-  putStrLn "Testing string parsing..."
-  quickCheck prop_parseString_success
+  sectionHeader "Number parsing (hex / oct / bin)"
+  qc7 <- mapM (uncurry runQC)
+    [ ("prop_parseHex_success",            property prop_parseHex_success)
+    , ("prop_parseOct_success",            property prop_parseOct_success)
+    , ("prop_parseBin_success",            property prop_parseBin_success)
+    , ("prop_parseHexidecimal_success",    property prop_parseHexidecimal_success)
+    , ("prop_parseOctal_success",          property prop_parseOctal_success)
+    , ("prop_parseBinary_success",         property prop_parseBinary_success)
+    , ("prop_parseHexidecimal_integer",    property prop_parseHexidecimal_integer)
+    , ("prop_parseHex_rejectNonHex",       property prop_parseHex_rejectNonHex)
+    , ("prop_parseOct_reject8or9",         property prop_parseOct_reject8or9)
+    , ("prop_parseOct_rejectNonOct",       property prop_parseOct_rejectNonOct)
+    , ("prop_parseBin_rejectDigits2to9",   property prop_parseBin_rejectDigits2to9)
+    , ("prop_parseHex_remainder",          property prop_parseHex_remainder)
+    ]
 
-  putStrLn "Testing number parsing..."
-  quickCheck prop_parseNat_success
-  quickCheck prop_parseInt_success
+  sectionHeader "choice"
+  qc8 <- mapM (uncurry runQC)
+    [ ("prop_choice_success",           property prop_choice_success)
+    ]
 
-  putStrLn "Testing hex/oct/bin parsing..."
-  quickCheck prop_parseHex_success
-  quickCheck prop_parseOct_success
-  quickCheck prop_parseBin_success
-  quickCheck prop_parseHexidecimal_success
-  quickCheck prop_parseOctal_success
-  quickCheck prop_parseBinary_success
-  quickCheck prop_parseHexidecimal_integer
-  quickCheck prop_parseHex_rejectNonHex
-  quickCheck prop_parseOct_reject8or9
-  quickCheck prop_parseOct_rejectNonOct
-  quickCheck prop_parseBin_rejectDigits2to9
-  quickCheck prop_parseHex_remainder
+  let allQC = concat [qc1, qc2, qc3, qc4, qc5, qc6, qc7, qc8]
+      qcPass = length (filter id allQC)
+      qcFail = length (filter not allQC)
+      totalPass = hp + qcPass
+      totalFail = hf + qcFail
 
-  putStrLn "Testing choice..."
-  quickCheck prop_choice_success
+  end <- getCurrentTime
+  summaryLine totalPass totalFail (diffUTCTime end start)
 
-  putStrLn "\nAll tests completed!"
+  if totalFail > 0 then exitFailure else pure ()
