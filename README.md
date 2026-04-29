@@ -29,6 +29,7 @@ MiniParser supports both **GHC** (Glasgow Haskell Compiler) and **MHS**
   - [Running Parsers](#running-parsers)
   - [Raw Parsers](#raw-parsers)
   - [Whitespace & Comment Stripping Parsers](#whitespace--comment-stripping-parsers)
+  - [Floating-Point Parsers](#floating-point-parsers)
   - [Look-Ahead Parsers](#look-ahead-parsers)
   - [Take-Until & Take-While Parsers](#take-until--take-while-parsers)
   - [Combinator Parsers](#combinator-parsers)
@@ -161,7 +162,7 @@ for package compatibility details.
 
 ## Testing
 
-There are 8 test suites defined in `MiniParser.cabal`:
+There are 9 test suites defined in `MiniParser.cabal`:
 
 | Suite                    | File                   | Tests | Description |
 |--------------------------|------------------------|-------|-------------|
@@ -172,6 +173,7 @@ There are 8 test suites defined in `MiniParser.cabal`:
 | `comments-jack-test`     | `examples/TestJack.hs` | 20   | Jack comment parser tests |
 | `comments-java-test`     | `examples/TestJava.hs` | 20   | Java comment parser tests |
 | `comments-kotlin-test`   | `examples/TestKotlin.hs` | 27 | Kotlin comment parser tests |
+| `float-test`             | `test/TestFloat.hs`    | 61 HUnit + 1 QuickCheck | Floating-point parser tests, including DoS exponent cap |
 | `perf-test`              | `test/TestPerf.hs`     | 21   | Performance and large-input tests |
 
 Run all suites with `make test` (both GHC and MHS), `make ghc-test` (GHC
@@ -211,6 +213,7 @@ MiniParser/
 ├── test/
 │   ├── Test.hs                       -- Main test suite (HUnit + QuickCheck)
 │   ├── TestExprParser.hs             -- Expression parser tests (111 HUnit tests)
+│   ├── TestFloat.hs                  -- Floating-point parser tests (HUnit + QuickCheck)
 │   ├── TestPerf.hs                   -- Performance and large-input tests
 │   └── TestHelpers.hs                -- Shared test utilities (stripPos, test)
 └── examples/
@@ -251,8 +254,15 @@ comment handling for their project. See
 everything from `Base` and adds higher-level parsers that depend on comments:
 `token`, `identifier`, `decimal`, `hexidecimal`, `octal`, `binary`, `signed`,
 `symbol`, `character`, `delimList`, `trim`, `row`, `splitLines`, `splitLinesT`.
-These parsers call `Comments.comments` to strip whitespace and comments before
-parsing.
+These parsers call `Comments.comments` to strip whitespace and comments
+before parsing.
+
+**`src/MiniParser/Float.hs`** -- Floating-point parsers (`float`,
+`expFloat`, `fp`), polymorphic over `RealFrac`. Kept in a separate module
+from `Parser.hs` because `test/Test.hs` is right at mhs's compile-pass
+stack limit (the same constraint that prompted the `PosTests` split);
+adding any top-level definition to `Parser.hs` pushes mhs's elaboration of
+`test/Test.hs` over. Users opt in with `import MiniParser.Float`.
 
 **`src/MiniParser/Comments/C.hs`** -- C-style comment parser. Handles
 end-of-line comments (`// ...`) and inline block comments (`/* ... */`).
@@ -282,6 +292,13 @@ prefix and postfix operators, parenthesised sub-expressions, complex
 expressions, whitespace handling, minimal operator table configurations,
 and intentional parse failures (trailing operators, unmatched parentheses,
 chained non-associative operators, etc.).
+
+**`test/TestFloat.hs`** -- Floating-point parser test suite for
+`MiniParser.Float`. Covers `fp`, `float`, `expFloat`, and their composition
+with `signed`. Includes the exponent-length DoS guard (inputs like
+`1e1000000000` reject in microseconds rather than allocating a giant
+`Integer` inside `readFloat`) and a QuickCheck round-trip property
+(`show` then parse via `signed float` for any `Double` in `[-1e30, 1e30]`).
 
 **`test/TestPerf.hs`** -- Performance and large-input tests. Generates
 configurable-size inputs (100KB+ at default scale) and verifies both
@@ -503,7 +520,7 @@ before parsing.
 | `hexidecimal` | `Num a => Parser a` | Unsigned hex literal with `0x` / `0X` prefix (e.g. `0xff`) |
 | `octal` | `Num a => Parser a` | Unsigned octal literal with `0o` / `0O` prefix (e.g. `0o17`) |
 | `binary` | `Num a => Parser a` | Unsigned binary literal with `0b` / `0B` prefix (e.g. `0b1010`) |
-| `signed` | `Num a => Parser a -> Parser a` | Wrap any numeric parser to accept an optional leading `-` (negate) or `+` (no-op) sign. Strips leading whitespace and comments before the sign; rejects whitespace between the sign and the digits. So `signed decimal "  -42"` succeeds, `signed decimal "- 42"` fails. The same rules apply to `signed hexidecimal`, `signed octal`, and `signed binary`. |
+| `signed` | `Num a => Parser a -> Parser a` | Wrap any numeric parser to accept an optional leading `-` (negate) or `+` (no-op) sign. Strips leading whitespace and comments before the sign; rejects whitespace between the sign and the digits. So `signed decimal "  -42"` succeeds, `signed decimal "- 42"` fails. The same rules apply to `signed hexidecimal`, `signed octal`, `signed binary`, and `signed float` (with `float` from `MiniParser.Float`). |
 
 > **Note:** All numeric parsers (`dec`, `hex`, `oct`, `bin`, `digs`,
 > `decimal`, `hexidecimal`, `octal`, `binary`) and the `signed` combinator
@@ -517,6 +534,29 @@ before parsing.
 | `symbol` | `Text -> Parser Text` | `token (string xs)` |
 | `character` | `Char -> Parser Char` | `token (char c)` |
 | `delimList` | `Char -> Parser a -> Parser [a]` | Parse a delimited list (e.g., comma-separated) |
+
+### Floating-Point Parsers
+
+Defined in `MiniParser.Float`. Polymorphic over `RealFrac` so the result
+can be specialized to `Double`, `Float`, or `Rational` at the call site.
+Import explicitly:
+
+```haskell
+import MiniParser.Float (float, expFloat, fp)
+```
+
+| Parser | Type | Description |
+|--------|------|-------------|
+| `fp` | `RealFrac r => Int -> Parser r` | Raw floating-point parser (does not strip whitespace). Accepts a digit run, optional `.digits`, optional `e`/`E[+-]?digits`. The `Int` argument caps the number of digits allowed in the exponent and bounds the intermediate `Integer` allocation inside `readFloat`; exceeding the cap is a hard parse failure. Does not handle a leading sign -- compose with `signed`. |
+| `float` | `RealFrac f => Parser f` | `expFloat 4` -- strips whitespace/comments, parses an unsigned decimal float, with a 4-digit exponent cap that covers all of `Double` (~`1e308`) and bounds `readFloat`'s worst-case allocation to ~4 KB. |
+| `expFloat` | `RealFrac f => Int -> Parser f` | `token (fp n)` -- strips whitespace/comments, then parses with a caller-supplied exponent-digit cap. Use this when you need a cap different from `float`'s default of 4 (e.g. for `Rational` results that can represent magnitudes well beyond `Double`). |
+
+> **Why a separate module?** `test/Test.hs` is right at mhs's
+> `toplevel`-pass stack limit. Adding any top-level definition to
+> `MiniParser.Parser` pushes mhs's compile of `test/Test.hs` over into
+> `ERR: stack overflow`. Keeping these parsers in `MiniParser.Float` --
+> a module that `test/Test.hs` doesn't import -- preserves MHS
+> compatibility. GHC users see no functional difference.
 
 ### Look-Ahead Parsers
 

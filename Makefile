@@ -30,14 +30,28 @@ ghc-build:
 
 # Run each GHC test binary individually via 'cabal run' so we can
 # pass the SCALE argument to perf-test.
+# `@echo` between runs adds a blank line after each suite's "All N tests
+# passed" line, before the next "cabal run X" output. (The leading
+# blank line above each summary comes from TestHelpers and we leave it
+# alone — modifying TestHelpers tips mhs's compile of test/Test.hs over
+# its stack limit, even on a strictly smaller diff.)
 ghc-test: ghc-build
 	cabal run MiniParser-test
+	@echo
 	cabal run expr-parser-test
+	@echo
 	cabal run comments-c-test
+	@echo
 	cabal run comments-haskell-test
+	@echo
 	cabal run comments-jack-test
+	@echo
 	cabal run comments-java-test
+	@echo
 	cabal run comments-kotlin-test
+	@echo
+	cabal run float-test
+	@echo
 	cabal run perf-test -- $(GHC_PERF_SCALE)
 
 ghc-performance: ghc-build

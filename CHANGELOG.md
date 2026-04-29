@@ -1,5 +1,53 @@
 # Revision history for MiniParser
 
+## 0.4.2.0 -- 2026-04-28
+
+* Added floating-point parsers `float`, `expFloat`, and `fp` in a new
+  module `MiniParser.Float`. They are polymorphic over `RealFrac` so the
+  result can be specialized to `Double`, `Float`, or `Rational` at the
+  call site. They accept a leading digit run, an optional `.digits`
+  fractional part, and an optional `e`/`E` exponent with optional `+`/`-`
+  sign. Sign and leading whitespace are not handled by the raw `fp` —
+  compose with `signed` and/or use `float`/`expFloat` (which call `token`),
+  the same pattern as the integer parsers.
+* Note that normally, I would not have put these new parsers in their
+  own source file. I tried adding them to Parser.hs but when compiling
+  using MHS, the tests hit some hard limits of MHS. Putting the parsers
+  into Float.hs seems to have enabled the tests. Given the difficulty
+  of adding new features to MiniParser, I may be forced to fork an MHS
+  specific version. I need to investigate more. I can refactor this code
+  after than investigation.
+* The new parsers live in their own module rather than being added to
+  `MiniParser.Parser`. `test/Test.hs` is right at mhs's `toplevel`-pass
+  stack limit (the same limit that prompted the `PosTests` split in
+  `0.4.1.0`), and adding any top-level definition to `MiniParser.Parser`
+  pushes mhs's compile of `test/Test.hs` over into a stack overflow.
+  Putting the new code in a module that `test/Test.hs` doesn't import
+  keeps that file's elaboration size unchanged. Users opt in with
+  `import MiniParser.Float`. Most users will use the `float` function,
+  perhaps with the `signed` combinator: `signed float`.
+    * `fp :: RealFrac r => Int -> Parser r` is the raw parser. The `Int`
+      argument caps the number of digits allowed in the exponent portion
+      of the input, bounding the intermediate `Integer` constructed inside
+      `readFloat`. Exceeding the cap is a hard parse failure (not a silent
+      backtrack), so e.g. `"1e1000000000"` is rejected rather than parsing
+      as `1.0` with the rest left in the remainder.
+    * `expFloat :: RealFrac f => Int -> Parser f` is `token (fp n)` —
+      strips leading whitespace and comments, then parses with the
+      caller-supplied exponent length cap.
+    * `float :: RealFrac f => Parser f` is `expFloat 4`. Four exponent
+      digits cover the full `Double` range (~`1e308`) with headroom; the
+      cap also bounds the worst-case allocation inside `readFloat` to
+      ~4 KB. Without a cap, an 11-byte input like `"1e999999999"` could
+      drive `readFloat` to allocate a ~400 MB `Integer` and burn 10s+ of
+      CPU per parse.
+* Implementation goes through `Numeric.readFloat` after assembling the
+  matched lexeme as `Text`. The exponent length check is lifted outside
+  the `<|>` that makes the exponent optional, so `"3e"`, `"3eX"`, `"3e+"`
+  and similar still parse leniently as `3.0` with the rest as remainder
+  (the exponent prefix simply backtracks), while a too-long exponent
+  fails the whole input cleanly.
+
 ## 0.4.1.0 -- 2026-04-26
 
 * `signed` behavior refined to match the desired semantics uniformly across
