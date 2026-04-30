@@ -14,7 +14,7 @@ cToken p = do
   p
 
 cIdentifier :: Parser Text
-cIdentifier = cToken ident
+cIdentifier = cToken identHaskell
 
 cSymbol :: Text -> Parser Text
 cSymbol xs = cToken (string xs)

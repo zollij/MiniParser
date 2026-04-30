@@ -36,9 +36,9 @@ posTests =
   -- Mixed content across lines: 'a'->col 2, 'b'->col 3, \n->Pos 2 1, 'c'->col 2, 'd'->col 3
   , "pos: mixed lines" ~:
     getPosFromResult (parse (string "ab\ncd") "ab\ncdef") @?= Just (Pos 2 3)
-  -- ident position: "foo" is 3 chars on line 1
-  , "pos: ident" ~:
-    getPosFromResult (parse ident "foo rest") @?= Just (Pos 1 4)
+  -- identHaskell position: "foo" is 3 chars on line 1
+  , "pos: identHaskell" ~:
+    getPosFromResult (parse identHaskell "foo rest") @?= Just (Pos 1 4)
   -- dec position: "123" is 3 chars
   , "pos: dec" ~:
     getPosFromResult (parse dec "123rest") @?= Just (Pos 1 4)

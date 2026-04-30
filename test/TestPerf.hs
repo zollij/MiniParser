@@ -236,7 +236,7 @@ main = do
   putStrLn ""
   putStrLn "-- Performance: C comment stripping --"
   let cToken p = do { CC.comments; p }
-      cIdent = cToken ident
+      cIdent = cToken identHaskell
       -- Parse as many identifiers as possible from C source
       cMany = many cIdent
   results7 <- sequence
@@ -246,7 +246,7 @@ main = do
   putStrLn ""
   putStrLn "-- Performance: repeated identifier parsing --"
   results8 <- sequence
-    [ timedTest "many identifier" limit (parse (many identifier)) identInput
+    [ timedTest "many identifierHaskell" limit (parse (many identifierHaskell)) identInput
     ]
 
   let allResults = concat [results1, results2, results3, results4,

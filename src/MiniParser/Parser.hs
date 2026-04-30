@@ -8,22 +8,21 @@
 
 -- Parser is split from Base to break a circular dependency:
 --   Comments.hs needs the Parser type (to define comments :: Parser ())
---   Parser.hs needs Comments.hs (to use comments inside token, identifier, etc.)
+--   Parser.hs needs Comments.hs (to use comments inside token, identifierHaskell, etc.)
 -- Base holds the types and primitives; this module re-exports Base and adds
--- higher-level parsers (token, identifier, etc.) that depend on Comments.
+-- higher-level parsers (token, identifierHaskell, etc.) that depend on Comments.
 module MiniParser.Parser (
-  -- Re-export everything from Base
   module MiniParser.Base,
-  -- Higher-level parsers that use comments
-  token, identifier, decimal, hexidecimal, octal, binary, signed,
+  token, decimal, hexidecimal, octal, binary, signed,
   symbol, character, delimList, trim, row, splitLines, splitLinesT,
-  digits, letters
+  letters, identifierHaskell,
+  float, expFloat
 ) where
 
 import MiniParser.Base
 import MiniParser.Comments (comments)
 import Control.Applicative
-import Data.Char (isDigit, isAlpha, isSpace)
+import Data.Char (isAlpha, isSpace)
 import qualified Data.Text as T
 
 -- parse out a single token from the beginning of the Text stream.
@@ -34,8 +33,9 @@ token p = do
   comments
   p
 
-identifier :: Parser T.Text
-identifier = token ident
+-- parse a Haskell identifier
+identifierHaskell :: Parser T.Text
+identifierHaskell = token identHaskell
 
 -- parse an unsigned decimal (base 10) number.
 -- Polymorphic over Num; specialize at the call site via a type annotation
@@ -100,11 +100,6 @@ symbol xs = token (string xs)
 character :: Char -> Parser Char
 character = token . char
 
--- efficient digits implementation, using Text instead of [Char]
--- use this instead of "many digit"
-digits :: Parser T.Text
-digits = pTakeWhile1 isDigit
-
 -- efficient letters implementation, using Text instead of [Char]
 -- use this instead of "many letter"
 letters :: Parser T.Text
@@ -140,3 +135,22 @@ splitLinesT inp =
   case parse splitLines inp of
     Right (s, _pos, _text)  -> s
     Left errs               -> error $ errorsToString errs
+
+-- ── Floating-point parsers ────────────────────────────────
+-- The raw `fp` parser lives in Base.hs alongside dec/hex/oct/bin. The
+-- whitespace/comment-stripping wrappers below (float, expFloat) live here
+-- because they call `token`.
+
+-- floating point, eats comments. Default cap is 4 exponent digits, which
+-- covers the entire Double range (~1e308). If you need a different cap, use
+-- expFloat directly. Most users will want this parser.
+float :: RealFrac f => Parser f
+float = expFloat 4
+
+-- floating point, eats comments
+-- The Int argument is the maximum number of digits allowed in the exponent
+-- portion of the input (e.g. expLen=4 accepts "1e9999" but rejects "1e10000").
+-- The cap defends against DoS via huge intermediate Integers inside readFloat.
+-- Most users won't need expFloat and will just use "float".
+expFloat :: RealFrac f => Int -> Parser f
+expFloat expLen = token $ fp expLen

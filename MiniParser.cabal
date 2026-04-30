@@ -16,13 +16,15 @@ name:               MiniParser
 -- PVP summary:     +-+------- breaking API changes
 --                  | | +----- non-breaking API additions
 --                  | | | +--- code changes with no API change
-version:            0.4.2.0
+version:            0.5.0.0
 
 -- A short (one-line) description of the package.
 synopsis:           Minimalist Text-based parser combinator library
 
 -- A longer description of the package.
-description:        MiniParser is intended to be an easy to understand and easy to use parser which supports GHC & MHS (MicroHs -- Micro Haskell). It is much smaller than many of the industrial grade parsers found on Hackage, yet is efficient enough to be used in real projects.
+description:        MiniParser is intended to be an easy to understand and easy to use parser combinator library. It is much smaller than many of the industrial grade parsers found on Hackage, yet is efficient enough to be used in real projects. Versions 0.5.0.0 and later require GHC; the v0.4.2.0 release is the last to support MHS (MicroHs).
+
+tested-with:        GHC == 9.6.7
 
 -- The license under which the package is released.
 license:            BSD-3-Clause
@@ -57,8 +59,7 @@ library
                       MiniParser.Comments.Jack,
                       MiniParser.Comments.Java,
                       MiniParser.Comments.Kotlin,
-                      MiniParser.ExprParser,
-                      MiniParser.Float
+                      MiniParser.ExprParser
 
     -- Modules included in this library but not exported.
     -- other-modules:
@@ -205,10 +206,6 @@ test-suite float-test
         text,
         time
 
--- perf-test is last because under MHS the default-scale run will stack-
--- overflow at runtime; the Makefile catches that with `mcabal test || true`
--- and re-runs at smaller scale. Any test-suite declared after this one
--- would be skipped on MHS.
 test-suite perf-test
     import:           warnings
     default-language: Haskell2010

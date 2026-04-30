@@ -3,7 +3,7 @@
 
 -- Base is split from Parser to break a circular dependency:
 --   Comments.hs needs the Parser type (to define comments :: Parser ())
---   Parser.hs needs Comments.hs (to use comments inside token, identifier, etc.)
+--   Parser.hs needs Comments.hs (to use comments inside token, identifierHaskell, etc.)
 -- Base holds the types and primitives that both modules need.
 module MiniParser.Base where
 
@@ -12,6 +12,7 @@ import Data.Char
 import Data.List (foldl')
 import Data.Text (Text)
 import qualified Data.Text as T
+import Numeric (readFloat)
 
 data Error =
   EndOfInput                  |  -- unexpected EOF
@@ -189,8 +190,10 @@ string s = P $ \(PState pos inp) ->
   then Right (s, PState (advanceText s pos) (T.drop (T.length s) inp))
   else Left [Unexpected (T.unpack s) (T.unpack (T.take (T.length s) inp))]
 
-ident :: Parser Text
-ident = P $ \(PState pos inp) ->
+-- parse a Haskell style identifier
+-- for non-Haskell languages, you will need to define your own identifier parser
+identHaskell :: Parser Text
+identHaskell = P $ \(PState pos inp) ->
   case T.uncons inp of  -- get first Char
     Nothing -> Left [EndOfInput]
     Just (c, rest)
@@ -218,6 +221,44 @@ bin = digs (\c -> c == '0' || c == '1') 2
 
 oct :: Num a => Parser a
 oct = digs isOctDigit 8
+
+-- efficient digits implementation, using Text instead of [Char]
+-- use this instead of "many digit"
+digits :: Parser Text
+digits = pTakeWhile1 isDigit
+
+-- raw floating point parser (doesn't eat comments).
+-- Lives in Base alongside dec/hex/oct/bin because it's a primitive that
+-- doesn't depend on comment handling. The whitespace-stripping wrappers
+-- (float, expFloat) live in Parser.hs since they call token.
+--
+-- The exponent length cap is enforced as a HARD failure: exceeding it rejects
+-- the whole input rather than silently dropping the exponent. An absent or
+-- ill-formed exponent prefix (e.g. "3e", "3eX") is still tolerated and parses
+-- as the leading number with the rest left in the remainder.
+fp :: RealFrac r => Int -> Parser r
+fp expLen = do
+  whole  <- digits
+  frac   <- (T.cons '.' <$> (char '.' *> digits)) <|> pure T.empty
+  -- pExp succeeds only when e/E is followed by an (optional) sign and at
+  -- least one digit. We keep the "exponent is optional" backtrack but lift
+  -- the cap check OUTSIDE the <|> so exceeding the cap is a hard fail.
+  expoR  <- (Just <$> pExp) <|> pure Nothing
+  expo   <- case expoR of
+    Just (n, _)      | n > expLen ->
+      pFailStr ("exponent length (" ++ show n ++ ") > " ++ show expLen)
+    Just (_, lexeme) -> pure lexeme
+    Nothing          -> pure T.empty
+  let str = T.unpack (whole <> frac <> expo)
+  case readFloat str of
+    [(x, "")] -> pure x
+    _fail     -> pFailStr ("invalid floating point number: " ++ str)
+  where
+    pExp = do
+      e    <- char 'e' <|> char 'E'
+      sign <- (T.singleton <$> (char '+' <|> char '-')) <|> pure T.empty
+      ds   <- digits
+      pure (T.length ds, T.cons e (sign <> ds))
 
 -- common digit string parser used by dec, hex and bin
 -- digs digTest pmult:
@@ -377,6 +418,8 @@ pTakeWhile1 test = do
     else
       return t
 
+-- iterate through a list of choices
+-- "choice [ p1, p2, ..., pN ]" is the same as "p1 <|> p2 <|> ... <|> pN"
 choice :: [Parser a] -> Parser a
 choice = foldr (<|>) empty
 
@@ -398,23 +441,6 @@ pDiscard ps = P $ \(PState pos inp) ->
          let P k = pDiscard ps
          in k st'
        Left _ -> Right ((), PState pos' inp')
-
--- Parse an identifier with additional allowed special characters.
--- Like 'ident' but also permits the given characters in the identifier.
-identWith :: [Char] -> Parser Text
-identWith spec = do
-  first <- do choice [letter, special]  -- order matters
-  remain <- pTakeWhile (\x -> isAlphaNum x || isSpecial x)
-  return $ T.cons first remain
-  where
-    isSpecial :: Char -> Bool
-    isSpecial c = c `elem` spec
-    special :: Parser Char
-    special = do
-      c <- item
-      if isSpecial c
-        then return c
-        else pFailStr "identWith.special"
 
 -- Parse a block comment that may contain nested occurrences of itself.
 -- Takes open and close delimiters; returns content between the outermost pair.

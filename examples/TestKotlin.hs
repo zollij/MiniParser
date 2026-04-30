@@ -14,7 +14,7 @@ ktToken p = do
   p
 
 ktIdentifier :: Parser Text
-ktIdentifier = ktToken ident
+ktIdentifier = ktToken identHaskell
 
 ktSymbol :: Text -> Parser Text
 ktSymbol xs = ktToken (string xs)

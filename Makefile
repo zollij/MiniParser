@@ -1,40 +1,29 @@
-# Makefile that wraps cabal & mcabal commands / targets
+# Makefile that wraps cabal commands / targets.
+#
+# v0.5.0.0 and later are GHC-only. The MHS (MicroHs) targets that existed
+# in the v0.4.x line have been removed; pin to v0.4.2.0 if you need MHS.
 
-# Combined targets
-build: ghc-build mhs-build
-test: ghc-test mhs-test
-clean: ghc-clean mhs-clean
-
-.PHONY: ghc-build ghc-test ghc-clean ghc-performance \
-        mhs-build mhs-test mhs-clean mhs-performance \
-        build test clean
-
-MHS_BIN = dist-mcabal/bin/mhs
-
-# MHS perf-test needs a larger spine stack (default 100k entries is too
-# small for inputs parsed char-at-a-time via 'many item').
-MHS_PERF_RTS = +RTS -K1M -RTS
+.PHONY: build test clean performance \
+        ghc-build ghc-test ghc-clean ghc-performance
 
 # perf-test accepts an optional SCALE argument controlling input sizes.
-# GHC default: 100 (~100KB inputs, completes in <1s).
-# MHS scale: 10 (~10KB inputs, completes in <5s).  MHS graph reduction
-# is ~100x slower than GHC native code on char-at-a-time operations,
-# so we use smaller inputs to keep the test under 5 minutes.
+# Default 100 produces ~100KB inputs, completes in <1s.
 GHC_PERF_SCALE = 100
-MHS_PERF_SCALE = 10
+
+build: ghc-build
+test: ghc-test
+clean: ghc-clean
+performance: ghc-performance
 
 # ── GHC targets ──────────────────────────────────────────────────────
 
 ghc-build:
 	cabal build all
 
-# Run each GHC test binary individually via 'cabal run' so we can
-# pass the SCALE argument to perf-test.
-# `@echo` between runs adds a blank line after each suite's "All N tests
-# passed" line, before the next "cabal run X" output. (The leading
-# blank line above each summary comes from TestHelpers and we leave it
-# alone — modifying TestHelpers tips mhs's compile of test/Test.hs over
-# its stack limit, even on a strictly smaller diff.)
+# Run each test binary individually via 'cabal run' so we can pass the
+# SCALE argument to perf-test. `@echo` between runs adds a blank line
+# after each suite's "All N tests passed" line, before the next
+# "cabal run X" output.
 ghc-test: ghc-build
 	cabal run MiniParser-test
 	@echo
@@ -59,27 +48,3 @@ ghc-performance: ghc-build
 
 ghc-clean:
 	cabal clean
-
-# ── MHS targets ──────────────────────────────────────────────────────
-
-mhs-build:
-	mcabal build
-
-# mcabal has no way to build test binaries without also running them,
-# so we use 'mcabal test' to build everything.  The perf-test at
-# default scale (100) will stack-overflow under MHS — that's expected.
-# We then re-run perf-test with the smaller MHS_PERF_SCALE.
-mhs-test:
-	mcabal test || true
-	@echo "Above stack overflow error is expected; we blew through the stack on MHS"
-	@echo ""
-	@echo "Re-running perf-test with MHS scale=$(MHS_PERF_SCALE)..."
-	$(MHS_BIN)/perf-test $(MHS_PERF_RTS) $(MHS_PERF_SCALE)
-
-mhs-performance:
-	mcabal test || true
-	$(MHS_BIN)/perf-test $(MHS_PERF_RTS) $(MHS_PERF_SCALE)
-
-mhs-clean:
-	mcabal clean
-	rm -f out.comb

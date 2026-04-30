@@ -14,7 +14,7 @@ jvToken p = do
   p
 
 jvIdentifier :: Parser Text
-jvIdentifier = jvToken ident
+jvIdentifier = jvToken identHaskell
 
 jvSymbol :: Text -> Parser Text
 jvSymbol xs = jvToken (string xs)

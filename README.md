@@ -2,18 +2,21 @@
 
 A minimalist parser combinator library written in Haskell. MiniParser operates
 on `Data.Text` input and supports configurable comment handling for different
-programming languages. The design of MiniParser was inspired by Graham Hutton's
-reveletory [Programming in Haskell](https://people.cs.nott.ac.uk/pszgmh/pih.html)
-book, and Heitor Toledo Lassarote de Paula's excellent
+programming languages. The design was inspired by Graham Hutton's
+[Programming in Haskell](https://people.cs.nott.ac.uk/pszgmh/pih.html) and
+Heitor Toledo Lassarote de Paula's
 ["Parser Combinators in Haskell"](https://serokell.io/blog/parser-combinators-in-haskell).
-Additionally, I have a need for combinator based compilation which brought me
-to Lennart Augustsson's wonderful [MicroHs](https://github.com/augustss/MicroHs) compiler and the
-standard parsers I looked at (Megaparsec, Attoparsec) don't support MicroHs.
-MiniParser fills that niche. I was also motivated by my relative inexperience with
-Haskell and the desire to code something useful from scratch.
+I was also motivated by my relative inexperience with Haskell and the desire
+to code something useful from scratch.
 
-MiniParser supports both **GHC** (Glasgow Haskell Compiler) and **MHS**
-(MicroHS).
+> **MHS support note.** Versions through **v0.4.2.0** supported both GHC and
+> [MicroHs](https://github.com/augustss/MicroHs) (MHS). v0.5.0.0 and later
+> are **GHC-only**. Empirical bisection during the v0.5 development cycle
+> showed that mhs's compile-pass stack threshold is sensitive to the shape
+> of every module in the library — making meaningful evolution of MiniParser
+> require shape-preserving workarounds that cost more than the changes
+> themselves. If you need MiniParser under MHS, pin to v0.4.2.0 (the tagged
+> commit is the frozen MHS-supporting release).
 
 ## Table of Contents
 
@@ -65,12 +68,12 @@ import MiniParser.Parser
 
 main :: IO ()
 main = do
-  -- Parse an identifier (strips leading whitespace/comments)
-  print $ parse identifier "  hello world"
+  -- Parse a Haskell-style identifier (strips leading whitespace/comments)
+  print $ parse identifierHaskell "  hello world"
   -- Right ("hello"," world")
 
   -- Parse a delimited list
-  print $ parse (delimList ',' identifier) "foo, bar, baz"
+  print $ parse (delimList ',' identifierHaskell) "foo, bar, baz"
   -- Right (["foo","bar","baz"],"")
 
   -- Parse a signed decimal number. `signed` strips leading whitespace
@@ -86,6 +89,11 @@ main = do
   -- The same rules apply to signed hexidecimal/octal/binary:
   print $ parse (signed hexidecimal) "  -0xff"
   -- Right (-255,"")
+
+  -- Floating-point: `float` strips whitespace/comments and accepts
+  -- a 4-digit exponent. Compose with `signed` for an optional sign.
+  print $ parse (signed float :: Parser Double) "  -3.14e2"
+  -- Right (-314.0,"")
 ```
 
 Note: The `OverloadedStrings` extension lets you write string literals that
@@ -94,71 +102,18 @@ to convert `String` values to `Text`.
 
 ## Building
 
-A `Makefile` wraps the `cabal` and `mcabal` commands. Both tools read the
-same `MiniParser.cabal` file. Build artifacts go to separate directories
-(`dist-newstyle/` for GHC, `dist-mcabal/` for MHS) so they do not interfere
-with each other.
+A `Makefile` wraps the `cabal` commands.
 
 ```bash
-make build         # build with both ghc & mhs
-make test          # run all 7 test suites with both ghc & mhs
-make clean         # clean both ghc & mhs build artifacts
+make build         # cabal build all
+make test          # build + run every test suite
+make clean         # cabal clean
+make performance   # run perf-test only
 ```
 
-### GHC Only
-
-```bash
-make ghc-build     # build the library with ghc
-make ghc-test      # run all 7 test suites with ghc
-make ghc-clean     # clean ghc build artifacts
-```
-
-### MHS Only
-
-```bash
-make mhs-build     # build the library with mhs
-make mhs-test      # run all 7 test suites with mhs
-make mhs-clean     # clean mhs build artifacts
-```
-
-You can also compile individual modules directly with `mhs`:
-
-```bash
-mhs -a~/.mcabal/mhs-0.15.3.0/packages -isrc -itest -r examples/TestC.hs
-```
-
-### MHS Dependencies
-
-MiniParser itself depends only on `base` and `text`. To build using mhs,
-first install `ghc-compat`:
-
-```bash
-mcabal install ghc-compat
-make mhs-build
-```
-
-To build and run the mhs tests, several other dependencies are needed. Install those packages
-and run the MHS tests as follows:
-
-```bash
-for pkg in ghc-compat call-stack HUnit array-mhs containers transformers mtl time splitmix random-mhs; do mcabal install $pkg; done
-mcabal install --git=https://github.com/nick8325/quickcheck.git QuickCheck
-make mhs-test
-```
-
-See the [MicroHs hackage compilation spreadsheet](https://docs.google.com/spreadsheets/d/1e0dbUg5uuFKNwgMpwtBnYRldPCYYyBqYfsbyhEjf5bU/edit?gid=0#gid=0)
-for package compatibility details.
-
-### MHS Compatibility Notes
-
-- MiniParser depends only on `base` and `text`. No `transformers`, no `mtl`.
-  This is intentional for MHS compatibility.
-- `takeUntilStr` uses manual scanning with `T.isPrefixOf`/`T.head`/`T.tail`
-  instead of `T.breakOn`, which is not available in MHS's `Data.Text`.
-- `pTakeWhile` uses `T.takeWhile`/`T.dropWhile` instead of `T.span`, which
-  is not available in MHS's `Data.Text`.
-- Comment modules use `T.dropWhile isSpace . T.dropWhileEnd isSpace` instead
-  of `T.strip`, which is not available in MHS's `Data.Text`.
+The `ghc-*` aliases (`ghc-build`, `ghc-test`, `ghc-clean`, `ghc-performance`)
+are equivalent — they exist for symmetry with earlier MHS-supporting
+releases that had a parallel `mhs-*` set.
 
 ## Testing
 
@@ -166,18 +121,17 @@ There are 9 test suites defined in `MiniParser.cabal`:
 
 | Suite                    | File                   | Tests | Description |
 |--------------------------|------------------------|-------|-------------|
-| `MiniParser-test`        | `test/Test.hs`         | 271 HUnit + 45 QuickCheck | Core parser tests |
-| `expr-parser-test`       | `test/TestExprParser.hs` | 111 HUnit | Expression parser tests |
+| `MiniParser-test`        | `test/Test.hs` (+ `PosTests.hs`) | 313 | Core parser tests (HUnit + QuickCheck) |
+| `expr-parser-test`       | `test/TestExprParser.hs` | 111 | Expression parser tests |
 | `comments-c-test`        | `examples/TestC.hs`    | 21   | C comment parser tests |
 | `comments-haskell-test`  | `examples/TestHaskell.hs` | 23 | Haskell comment parser tests |
 | `comments-jack-test`     | `examples/TestJack.hs` | 20   | Jack comment parser tests |
 | `comments-java-test`     | `examples/TestJava.hs` | 20   | Java comment parser tests |
 | `comments-kotlin-test`   | `examples/TestKotlin.hs` | 27 | Kotlin comment parser tests |
-| `float-test`             | `test/TestFloat.hs`    | 61 HUnit + 1 QuickCheck | Floating-point parser tests, including DoS exponent cap |
-| `perf-test`              | `test/TestPerf.hs`     | 21   | Performance and large-input tests |
+| `float-test`             | `test/TestFloat.hs`    | 62  | Floating-point parser tests (HUnit + QuickCheck), including DoS exponent cap |
+| `perf-test`              | `test/TestPerf.hs`     | 20  | Performance and large-input tests |
 
-Run all suites with `make test` (both GHC and MHS), `make ghc-test` (GHC
-only), or `make mhs-test` (MHS only).
+Run all suites with `make test`.
 
 The core test suite (`Test.hs`) uses HUnit for deterministic assertions and
 QuickCheck for property-based testing of character parsers, takeUntil parsers,
@@ -192,18 +146,18 @@ module's individual parsers, combined `comments` function, and integration with
 
 ```
 MiniParser/
-├── MiniParser.cabal                  -- Build configuration (GHC and MHS)
-├── Makefile                          -- Wraps cabal/mcabal targets
+├── MiniParser.cabal                  -- Build configuration
+├── Makefile                          -- Wraps cabal targets
 ├── README.md                         -- This documentation
 ├── CHANGELOG.md                      -- Version history
 ├── LICENSE                           -- BSD-3-Clause license
 ├── .gitignore                        -- Git ignore rules
 ├── src/
 │   └── MiniParser/
-│       ├── Base.hs                   -- Parser type, instances, all primitives
+│       ├── Base.hs                   -- Parser type, primitives, raw numeric parsers (dec/hex/oct/bin/fp)
 │       ├── Comments.hs               -- Default comment parser (Haskell: --, {- -})
 │       ├── ExprParser.hs             -- Expression parser (buildExprParser, Operator)
-│       ├── Parser.hs                 -- Re-exports Base + comment-aware parsers
+│       ├── Parser.hs                 -- Re-exports Base + comment-aware parsers (token, decimal, signed, float, ...)
 │       └── Comments/
 │           ├── C.hs                  -- C-style comments: //, /* */
 │           ├── Haskell.hs            -- Haskell comments: --, {- -} (nested)
@@ -212,7 +166,8 @@ MiniParser/
 │           └── Kotlin.hs             -- Kotlin comments: //, /* */ (nested), /** */
 ├── test/
 │   ├── Test.hs                       -- Main test suite (HUnit + QuickCheck)
-│   ├── TestExprParser.hs             -- Expression parser tests (111 HUnit tests)
+│   ├── PosTests.hs                   -- Position-tracking tests (other-modules of MiniParser-test)
+│   ├── TestExprParser.hs             -- Expression parser tests
 │   ├── TestFloat.hs                  -- Floating-point parser tests (HUnit + QuickCheck)
 │   ├── TestPerf.hs                   -- Performance and large-input tests
 │   └── TestHelpers.hs                -- Shared test utilities (stripPos, test)
@@ -229,11 +184,12 @@ MiniParser/
 **`src/MiniParser/Base.hs`** -- The foundation of the library. Contains the
 `Parser` newtype, `Error` type, `Functor`/`Applicative`/`Monad`/`Alternative`
 instances, and all low-level parser primitives (`item`, `satisfy`, `char`,
-`string`, `digit`, `letter`, etc.). Also contains `pDiscard` (the engine for
-comment stripping), look-ahead parsers, take-until parsers, `choice`,
-`identWith`, and utility functions. This module
-has no dependency on any comment parser. The parse stream type is `Text`
-(from `Data.Text`).
+`string`, `digit`, `letter`, `digits`, etc.). Houses every numeric parser
+that doesn't need comment-handling: `dec`, `hex`, `oct`, `bin`, `digs`, and
+`fp` (the raw float parser). Also contains `pDiscard` (the engine for
+comment stripping), look-ahead parsers, take-until parsers, `choice`, and
+utility functions. This module has no dependency on any comment parser. The
+parse stream type is `Text` (from `Data.Text`).
 
 **`src/MiniParser/ExprParser.hs`** -- Expression parser module, inspired by
 Parsec's `buildExpressionParser`. Exports the `Operator` type (with
@@ -251,18 +207,14 @@ comment handling for their project. See
 [Configuring Comment Parsers](#configuring-comment-parsers).
 
 **`src/MiniParser/Parser.hs`** -- The main user-facing module. Re-exports
-everything from `Base` and adds higher-level parsers that depend on comments:
-`token`, `identifier`, `decimal`, `hexidecimal`, `octal`, `binary`, `signed`,
-`symbol`, `character`, `delimList`, `trim`, `row`, `splitLines`, `splitLinesT`.
-These parsers call `Comments.comments` to strip whitespace and comments
-before parsing.
-
-**`src/MiniParser/Float.hs`** -- Floating-point parsers (`float`,
-`expFloat`, `fp`), polymorphic over `RealFrac`. Kept in a separate module
-from `Parser.hs` because `test/Test.hs` is right at mhs's compile-pass
-stack limit (the same constraint that prompted the `PosTests` split);
-adding any top-level definition to `Parser.hs` pushes mhs's elaboration of
-`test/Test.hs` over. Users opt in with `import MiniParser.Float`.
+everything from `Base` and adds the higher-level parsers that depend on
+comment-handling: `token`, `identifierHaskell`, `decimal`, `hexidecimal`,
+`octal`, `binary`, `signed`, `symbol`, `character`, `delimList`, `trim`,
+`row`, `splitLines`, `splitLinesT`, `letters`, plus the comment-stripping
+floating-point wrappers `float` and `expFloat`. The raw `fp` parser lives
+in `Base.hs` (no comment handling needed) and is re-exported here, so
+callers see the full numeric API in one module — matching Megaparsec's
+`Char.Lexer` and Attoparsec's `Data.Attoparsec.Text` consolidation.
 
 **`src/MiniParser/Comments/C.hs`** -- C-style comment parser. Handles
 end-of-line comments (`// ...`) and inline block comments (`/* ... */`).
@@ -282,9 +234,16 @@ end-of-line (`// ...`), inline (`/* ... */`), and Javadoc comments
 end-of-line (`// ...`), nested block comments (`/* ... */`), and KDoc comments
 (`/** ... */`). Unlike C/Java, Kotlin block comments nest.
 
-**`test/Test.hs`** -- Main test suite with 133 HUnit tests covering every
-exported parser, plus 28 QuickCheck properties for randomized testing of
-character parsers, text parsers, number parsers, and structural properties.
+**`test/Test.hs`** -- Main test suite (HUnit + QuickCheck), 313 tests
+combined with the position-tracking cases in `PosTests.hs`. Covers every
+exported parser plus QuickCheck round-trip and structural properties for
+character parsers, text parsers, and number parsers.
+
+**`test/PosTests.hs`** -- HUnit position-tracking tests, included as an
+`other-modules` of `MiniParser-test` rather than its own test-suite.
+Originally split out from `Test.hs` to stay under MHS's compile-pass stack
+threshold; now kept split for the same reason as Megaparsec/Parsec keep
+test files small (compilation latency).
 
 **`test/TestExprParser.hs`** -- Expression parser test suite with 111 HUnit
 tests. Covers basic arithmetic, precedence, left/right/non-associativity,
@@ -293,17 +252,17 @@ expressions, whitespace handling, minimal operator table configurations,
 and intentional parse failures (trailing operators, unmatched parentheses,
 chained non-associative operators, etc.).
 
-**`test/TestFloat.hs`** -- Floating-point parser test suite for
-`MiniParser.Float`. Covers `fp`, `float`, `expFloat`, and their composition
-with `signed`. Includes the exponent-length DoS guard (inputs like
-`1e1000000000` reject in microseconds rather than allocating a giant
-`Integer` inside `readFloat`) and a QuickCheck round-trip property
-(`show` then parse via `signed float` for any `Double` in `[-1e30, 1e30]`).
+**`test/TestFloat.hs`** -- Floating-point parser test suite for the `float`
+/ `expFloat` / `fp` parsers (now exported from `MiniParser.Parser`). Covers
+the parsers and their composition with `signed`, the exponent-length DoS
+guard (inputs like `1e1000000000` reject in microseconds rather than
+allocating a giant `Integer` inside `readFloat`), and a QuickCheck round-trip
+property (`show` then parse via `signed float` for any `Double` in
+`[-1e30, 1e30]`).
 
 **`test/TestPerf.hs`** -- Performance and large-input tests. Generates
 configurable-size inputs (100KB+ at default scale) and verifies both
-correctness and timing bounds. Supports GHC and MHS with different scale
-parameters.
+correctness and timing bounds.
 
 **`test/TestHelpers.hs`** -- Shared test utilities (`stripPos`, `getPos`,
 `test`) used by all test suites.
@@ -327,14 +286,14 @@ resolve a circular dependency:
 
 Without this split, `Comments.hs` would need to import `Parser.hs` (to get
 the `Parser` type and `pDiscard`), and `Parser.hs` would need to import
-`Comments.hs` (to use `comments` inside `token`, `identifier`, etc.) -- a
-cycle that Haskell does not allow.
+`Comments.hs` (to use `comments` inside `token`, `identifierHaskell`, etc.)
+-- a cycle that Haskell does not allow.
 
 `Base.hs` breaks the cycle by holding everything that both modules need:
 
 - **`Base.hs`** -- `Parser` type, instances, all primitives, `pDiscard`
 - **`Comments.hs`** -- imports `Base`, exports `comments :: Parser ()`
-- **`Parser.hs`** -- imports `Base` + `Comments`, exports `token`, `identifier`, etc.
+- **`Parser.hs`** -- imports `Base` + `Comments`, exports `token`, `identifierHaskell`, etc.
 
 Users import `MiniParser.Parser` which re-exports all of `Base`, so the split
 is invisible from the outside.
@@ -348,8 +307,8 @@ operator table.
 
 MiniParser uses a **file-swap** approach for configuring comments. The module
 `src/MiniParser/Comments.hs` is a user-replaceable file that controls what
-`token`, `identifier`, `symbol`, and other higher-level parsers treat as
-comments.
+`token`, `identifierHaskell`, `symbol`, and other higher-level parsers
+treat as comments.
 
 ### Default: Haskell Comments
 
@@ -384,8 +343,9 @@ Then edit the first line of `src/MiniParser/Comments.hs` to read:
 module MiniParser.Comments (comments) where
 ```
 
-After rebuilding, `token`, `identifier`, `symbol`, etc. will automatically
-strip C-style comments (`//` and `/* */`) instead of Haskell comments.
+After rebuilding, `token`, `identifierHaskell`, `symbol`, etc. will
+automatically strip C-style comments (`//` and `/* */`) instead of Haskell
+comments.
 
 ### Whitespace Only (No Comments)
 
@@ -416,7 +376,7 @@ myToken p = do
   p
 
 myIdentifier :: Parser Text
-myIdentifier = myToken ident
+myIdentifier = myToken identHaskell
 ```
 
 This is the approach used by the example test files in `examples/`.
@@ -497,15 +457,15 @@ These operate directly on input without stripping whitespace or comments.
 | `alphanum` | `Parser Char` | Consume one alphanumeric character |
 | `char` | `Char -> Parser Char` | Consume a specific character |
 | `string` | `Text -> Parser Text` | Match an exact text string |
-| `ident` | `Parser Text` | Parse a lowercase-starting identifier |
-| `identWith` | `[Char] -> Parser Text` | Parse an identifier with allowed special characters (e.g., `_`, `$`, `.`) |
+| `identHaskell` | `Parser Text` | Parse a Haskell-style identifier (lowercase letter start, alphanumeric continuation). |
 | `dec` | `Num a => Parser a` | Parse a decimal (base 10) number |
 | `hex` | `Num a => Parser a` | Parse hex (base 16) digits (no `0x` prefix); accepts `0`-`9`, `a`-`f`, `A`-`F` |
 | `oct` | `Num a => Parser a` | Parse octal (base 8) digits (no `0o` prefix); accepts `0`-`7` |
 | `bin` | `Num a => Parser a` | Parse binary (base 2) digits (no `0b` prefix); accepts `0`-`1` |
 | `digs` | `Num a => (Char -> Bool) -> a -> Parser a` | Shared digit-folding primitive: take chars matching the predicate, fold into `a` using the given positional multiplier. Used by `dec`/`hex`/`oct`/`bin`. |
 | `digits` | `Parser Text` | One or more digits as `Text` (efficient alternative to `many digit`) |
-| `letters` | `Parser Text` | One or more letters as `Text` (efficient alternative to `many letter`) |
+| `letters` | `Parser Text` | One or more letters as `Text` (efficient alternative to `many letter`). Defined in `Parser.hs`, re-exported. |
+| `fp` | `RealFrac r => Int -> Parser r` | Raw floating-point parser (does not strip whitespace). Accepts a digit run, optional `.digits`, optional `e`/`E[+-]?digits`. The `Int` argument caps the number of digits allowed in the exponent and bounds the intermediate `Integer` allocation inside `readFloat`; exceeding the cap is a hard parse failure. Does not handle a leading sign — compose with `signed`. |
 
 ### Whitespace & Comment Stripping Parsers
 
@@ -515,12 +475,15 @@ before parsing.
 | Parser | Type | Description |
 |--------|------|-------------|
 | `token` | `Parser a -> Parser a` | Strip comments/whitespace, then run parser |
-| `identifier` | `Parser Text` | `token ident` |
+| `identifierHaskell` | `Parser Text` | `token identHaskell` -- a Haskell-style identifier with leading whitespace/comments stripped. |
 | `decimal` | `Num a => Parser a` | `token dec` |
 | `hexidecimal` | `Num a => Parser a` | Unsigned hex literal with `0x` / `0X` prefix (e.g. `0xff`) |
 | `octal` | `Num a => Parser a` | Unsigned octal literal with `0o` / `0O` prefix (e.g. `0o17`) |
 | `binary` | `Num a => Parser a` | Unsigned binary literal with `0b` / `0B` prefix (e.g. `0b1010`) |
-| `signed` | `Num a => Parser a -> Parser a` | Wrap any numeric parser to accept an optional leading `-` (negate) or `+` (no-op) sign. Strips leading whitespace and comments before the sign; rejects whitespace between the sign and the digits. So `signed decimal "  -42"` succeeds, `signed decimal "- 42"` fails. The same rules apply to `signed hexidecimal`, `signed octal`, `signed binary`, and `signed float` (with `float` from `MiniParser.Float`). |
+| `signed` | `Num a => Parser a -> Parser a` | Wrap any numeric parser to accept an optional leading `-` (negate) or `+` (no-op) sign. Strips leading whitespace and comments before the sign; rejects whitespace between the sign and the digits. So `signed decimal "  -42"` succeeds, `signed decimal "- 42"` fails. The same rules apply to `signed hexidecimal`, `signed octal`, `signed binary`, and `signed float`. |
+| `symbol` | `Text -> Parser Text` | `token (string xs)` |
+| `character` | `Char -> Parser Char` | `token (char c)` |
+| `delimList` | `Char -> Parser a -> Parser [a]` | Parse a delimited list (e.g., comma-separated) |
 
 > **Note:** All numeric parsers (`dec`, `hex`, `oct`, `bin`, `digs`,
 > `decimal`, `hexidecimal`, `octal`, `binary`) and the `signed` combinator
@@ -531,32 +494,18 @@ before parsing.
 > for a specific machine-width type. GHC defaults ambiguous `Num`
 > constraints to `Integer`, so an annotation is only needed when defaulting
 > can't apply.
-| `symbol` | `Text -> Parser Text` | `token (string xs)` |
-| `character` | `Char -> Parser Char` | `token (char c)` |
-| `delimList` | `Char -> Parser a -> Parser [a]` | Parse a delimited list (e.g., comma-separated) |
 
-### Floating-Point Parsers
+### Floating-Point Parsers (token-aware)
 
-Defined in `MiniParser.Float`. Polymorphic over `RealFrac` so the result
-can be specialized to `Double`, `Float`, or `Rational` at the call site.
-Import explicitly:
-
-```haskell
-import MiniParser.Float (float, expFloat, fp)
-```
+These are the comment-stripping wrappers around the raw `fp` parser
+(documented above in [Raw Parsers](#raw-parsers)). All three are
+polymorphic over `RealFrac` so the result can be specialized to `Double`,
+`Float`, or `Rational` at the call site.
 
 | Parser | Type | Description |
 |--------|------|-------------|
-| `fp` | `RealFrac r => Int -> Parser r` | Raw floating-point parser (does not strip whitespace). Accepts a digit run, optional `.digits`, optional `e`/`E[+-]?digits`. The `Int` argument caps the number of digits allowed in the exponent and bounds the intermediate `Integer` allocation inside `readFloat`; exceeding the cap is a hard parse failure. Does not handle a leading sign -- compose with `signed`. |
 | `float` | `RealFrac f => Parser f` | `expFloat 4` -- strips whitespace/comments, parses an unsigned decimal float, with a 4-digit exponent cap that covers all of `Double` (~`1e308`) and bounds `readFloat`'s worst-case allocation to ~4 KB. |
 | `expFloat` | `RealFrac f => Int -> Parser f` | `token (fp n)` -- strips whitespace/comments, then parses with a caller-supplied exponent-digit cap. Use this when you need a cap different from `float`'s default of 4 (e.g. for `Rational` results that can represent magnitudes well beyond `Double`). |
-
-> **Why a separate module?** `test/Test.hs` is right at mhs's
-> `toplevel`-pass stack limit. Adding any top-level definition to
-> `MiniParser.Parser` pushes mhs's compile of `test/Test.hs` over into
-> `ERR: stack overflow`. Keeping these parsers in `MiniParser.Float` --
-> a module that `test/Test.hs` doesn't import -- preserves MHS
-> compatibility. GHC users see no functional difference.
 
 ### Look-Ahead Parsers
 
@@ -763,7 +712,7 @@ blockComment = do
 
 2. Add it to `exposed-modules` in `MiniParser.cabal`.
 
-3. To make it the default for `token`/`identifier`/etc., copy it to
+3. To make it the default for `token`/`identifierHaskell`/etc., copy it to
    `src/MiniParser/Comments.hs` and change the module name to
    `MiniParser.Comments`.
 
@@ -838,31 +787,10 @@ optimized `decimal` parser gives it a larger advantage. MiniParser's `dec`
 parser uses a simpler `foldl'`-based implementation, which leaves room for
 future optimization.
 
-### GHC vs MHS
-
-A separate benchmark (`bench-miniparser`) compares MiniParser compiled with
-GHC against MiniParser compiled with MHS (MicroHS). This uses the same three
-workloads but without Criterion or external parser libraries (MHS does not
-support them). Timing uses `getCPUTime`, 1000 iterations per workload.
-
-| Workload | GHC (μs/parse) | MHS (μs/parse) | MHS/GHC ratio |
-|----------|----------------|-----------------|---------------|
-| CSV      | 103            | 15,981          | 155x          |
-| Log      | 83             | 75,830          | 913x          |
-| JSON     | 328            | 405,386         | 1,236x        |
-
-MHS uses graph reduction (interpreted combinator execution) rather than
-native code generation, so the large slowdown is expected. The ratio varies
-by workload: CSV is primarily string-oriented (`pTakeWhile`, `T.pack`) and
-fares best; log and JSON are number-heavy (`dec` calls `foldl'` per digit)
-and show larger ratios.
-
 ### Reproducing
 
 The benchmark code lives in `perf-compare/`, a self-contained Cabal project
 that symlinks to MiniParser's `src/` directory.
-
-**GHC vs Attoparsec vs Megaparsec** (requires Criterion):
 
 ```bash
 cd perf-compare
@@ -870,15 +798,6 @@ cabal bench bench-csv    # CSV benchmark
 cabal bench bench-log    # Log benchmark
 cabal bench bench-json   # JSON benchmark
 cabal bench              # all three
-```
-
-**GHC vs MHS** (no external dependencies):
-
-```bash
-cd perf-compare
-cabal run bench-miniparser -- 1000              # GHC
-mhs -a~/.mcabal/mhs-0.15.3.0/packages \
-    -isrc -ibench -r bench/BenchMiniParser.hs   # MHS
 ```
 
 ### Use of AI

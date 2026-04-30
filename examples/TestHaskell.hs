@@ -14,7 +14,7 @@ hToken p = do
   p
 
 hIdentifier :: Parser Text
-hIdentifier = hToken ident
+hIdentifier = hToken identHaskell
 
 hSymbol :: Text -> Parser Text
 hSymbol xs = hToken (string xs)

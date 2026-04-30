@@ -1,5 +1,52 @@
 # Revision history for MiniParser
 
+## 0.5.0.0 -- 2026-04-30
+
+* **Breaking — MHS (MicroHs) support is dropped.** v0.5.0.0 and later are
+  GHC-only. The last MHS-supporting release is **v0.4.2.0**, tagged at
+  the corresponding commit; pin to it with `MiniParser ^>= 0.4.2` if you
+  need MHS. The reason: empirical bisection in this release cycle showed
+  that mhs's `toplevel` compile-pass stack threshold on `test/Test.hs` is
+  sensitive to the *shape of every module in the library*, not just
+  modules `test/Test.hs` transitively imports. Removing a module from
+  `exposed-modules`, replacing a module's contents with a thinner stub,
+  or even renaming a top-level binding can tip mhs over — so meaningful
+  evolution of MiniParser would require shape-preserving workarounds
+  that cost more than the changes themselves. Freezing MHS support at
+  v0.4.2.0 is honest about that constraint and lets the library evolve
+  on its own terms.
+* **Breaking — renamed `identifier` → `identifierHaskell` and `ident` →
+  `identHaskell`** to make their Haskell-specific lexical rules explicit
+  in the name. Both parsers require a lowercase-letter start followed by
+  alphanumerics — rules that don't apply to most other languages (which
+  permit leading underscores, dollar signs, Unicode letters, uppercase
+  starts, etc.). The unqualified `identifier`/`ident` names suggested a
+  generality the parsers don't have, and made it easy to silently produce
+  wrong results when reaching for them while parsing other languages.
+  Migration is a mechanical find-and-replace: `ident` → `identHaskell`,
+  `identifier` → `identifierHaskell`.
+* **Breaking — removed `identWith`.** It was deprecated in 0.4.x as "just
+  the Haskell ident with special characters allowed; isn't very useful."
+  Removed as part of this cycle's deprecation cleanup. Callers that need
+  identifier parsing with non-Haskell rules should write a small custom
+  parser using `pTakeWhile1` and the predicate of their choice.
+* **`MiniParser.Float` module removed; the floating-point parsers (`float`,
+  `expFloat`, `fp`) are now exported from `MiniParser.Parser`.** This
+  consolidates all numeric parsers in one module — matching Megaparsec's
+  `Text.Megaparsec.Char.Lexer` and Attoparsec's `Data.Attoparsec.Text`.
+  Callers using `import MiniParser.Float` should switch to
+  `import MiniParser.Parser` (or `import MiniParser.Parser
+  (float, expFloat, fp)` for an explicit list).
+* Removed CPP gating, `if !impl(ghc)` cabal conditionals, and the
+  Makefile's `mhs-build`/`mhs-test`/`mhs-clean`/`mhs-performance` targets
+  that existed to keep the prior MHS scaffolding alive. The Makefile is
+  now GHC-only; `make build`, `make test`, `make clean` correspond
+  one-to-one to their `ghc-*` counterparts.
+* README rewritten to drop MHS-specific dependency lists, build
+  instructions, compatibility notes, and the GHC-vs-MHS performance
+  benchmark section. A short note in the intro points MHS users at
+  v0.4.2.0.
+
 ## 0.4.2.0 -- 2026-04-28
 
 * Added floating-point parsers `float`, `expFloat`, and `fp` in a new

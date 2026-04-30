@@ -34,8 +34,8 @@ hunitTests = TestList $ concat
   , "parse letter success" ~: stripPos (parse letter "abc") ~?= Right ('a', "bc")
   , "parse letter failure (digit)" ~: parse letter "123" ~?= Left [Unexpected' "1"]
   , "parse letter failure (empty)" ~: parse letter "" ~?= Left [EndOfInput]
-  , "parse identifier success" ~: stripPos (parse identifier "foo123 ") ~?= Right ("foo123", " ")
-  , "parse identifier failure (capital start)" ~: parse identifier "Foo123" ~?= Left [Unexpected' "F"]
+  , "parse identifierHaskell success" ~: stripPos (parse identifierHaskell "foo123 ") ~?= Right ("foo123", " ")
+  , "parse identifierHaskell failure (capital start)" ~: parse identifierHaskell "Foo123" ~?= Left [Unexpected' "F"]
   , "parse decimal success" ~: stripPos (parse decimal "42 foo") ~?= Right (42, " foo")
   , "parse decimal failure (non-digit start)" ~: parse decimal "abc" ~?= Left [Unexpected' "a"]
   , "parse decimal failure (empty)" ~: parse decimal "" ~?= Left [EndOfInput]
@@ -78,9 +78,9 @@ hunitTests = TestList $ concat
   , "parse character success" ~: stripPos (parse (character 'f') "  f  bar") ~?= Right ('f', "  bar")
   , "parse character failure" ~: parse (character 'f') "  g  bar" ~?= Left [Unexpected' "g"]
   -- Basic parser combinators
-  , "parse ident success" ~: stripPos (parse ident "foo123") ~?= Right ("foo123", "")
-  , "parse ident failure (uppercase start)" ~: parse ident "Foo123" ~?= Left [Unexpected' "F"]
-  , "parse ident failure (digit start)" ~: parse ident "123foo" ~?= Left [Unexpected' "1"]
+  , "parse identHaskell success" ~: stripPos (parse identHaskell "foo123") ~?= Right ("foo123", "")
+  , "parse identHaskell failure (uppercase start)" ~: parse identHaskell "Foo123" ~?= Left [Unexpected' "F"]
+  , "parse identHaskell failure (digit start)" ~: parse identHaskell "123foo" ~?= Left [Unexpected' "1"]
   , "parse dec success" ~: stripPos (parse dec "123") ~?= Right (123, "")
   , "parse dec success with remainder" ~: stripPos (parse dec "456abc") ~?= Right (456, "abc")
   , "parse dec failure (no digits)" ~: parse dec "abc" ~?= Left [Unexpected' "a"]
@@ -382,7 +382,7 @@ hunitTests = TestList $ concat
   , "parse delimList success" ~: stripPos (parse (delimList ',' (string "item")) "item,item,item") ~?= Right (["item", "item", "item"], "")
   , "parse delimList single item" ~: stripPos (parse (delimList ',' (string "item")) "item") ~?= Right (["item"], "")
   , "parse delimList empty" ~: stripPos (parse (delimList ',' (string "item")) "") ~?= Right ([], "")
-  , "parse delimList with spaces" ~: stripPos (parse (delimList ',' identifier) "foo, bar, baz") ~?= Right (["foo", "bar", "baz"], "")
+  , "parse delimList with spaces" ~: stripPos (parse (delimList ',' identifierHaskell) "foo, bar, baz") ~?= Right (["foo", "bar", "baz"], "")
   -- Space and token parsers
   , "parse space success" ~: stripPos (parse space "   \t\n  abc") ~?= Right ((), "abc")
   , "parse space no spaces" ~: stripPos (parse space "abc") ~?= Right ((), "abc")
@@ -413,12 +413,6 @@ hunitTests = TestList $ concat
   , "parse pDiscard [] no space" ~: stripPos (parse (pDiscard []) "rest") ~?= Right ((), "rest")
   , "parse pDiscard [] empty input" ~: stripPos (parse (pDiscard []) ("" :: Text)) ~?= Right ((), "")
 
-  -- Symbol parser with special characters
-  , "parse identWith success (letter first)" ~: stripPos (parse (identWith ['_', '$']) "var_name$") ~?= Right ("var_name$", "")
-  , "parse identWith success (special first)" ~: stripPos (parse (identWith ['_', '$']) "_private123") ~?= Right ("_private123", "")
-  , "parse identWith failure (digit first)" ~: case parse (identWith ['_']) ("123var" :: Text) of
-      Left errs -> assertBool "Should have errors" (not $ null errs)
-      Right _ -> assertFailure "Should have failed"
   -- Trim parser
   , "parse trim success" ~: stripPos (parse trim "  content with spaces  \n  ") ~?= Right ("content with spaces", "  ")
   , "parse trim only spaces" ~: case parse trim ("   \n  " :: Text) of
