@@ -15,8 +15,7 @@ module MiniParser.Parser (
   module MiniParser.Base,
   token, decimal, hexidecimal, octal, binary, signed,
   symbol, character, delimList, trim, row, splitLines, splitLinesT,
-  letters, identifierHaskell,
-  float, expFloat
+  letters, identifierHaskell, float, expFloat, scientific, expScientific
 ) where
 
 import MiniParser.Base
@@ -24,6 +23,7 @@ import MiniParser.Comments (comments)
 import Control.Applicative
 import Data.Char (isAlpha, isSpace)
 import qualified Data.Text as T
+import Data.Scientific (Scientific)
 
 -- parse out a single token from the beginning of the Text stream.
 -- This function will also throw away comments by using the comments parser
@@ -136,21 +136,59 @@ splitLinesT inp =
     Right (s, _pos, _text)  -> s
     Left errs               -> error $ errorsToString errs
 
--- ── Floating-point parsers ────────────────────────────────
--- The raw `fp` parser lives in Base.hs alongside dec/hex/oct/bin. The
--- whitespace/comment-stripping wrappers below (float, expFloat) live here
--- because they call `token`.
+-- ── Numeric: scientific and floating-point parsers ────────────────────────
+-- The raw 'sci' and 'fp' primitives live in Base.hs alongside dec/hex/oct/bin.
+-- The whitespace/comment-stripping wrappers below (scientific, expScientific,
+-- float, expFloat) live here because they call 'token'.
+--
+-- 'scientific'/'expScientific' are lenient (accept bare integer-shape input);
+-- 'float'/'expFloat' are strict-fractional (reject bare integers, matching
+-- Megaparsec's 'Text.Megaparsec.Char.Lexer.float'). See the doc strings on
+-- 'sci' and 'fp' in Base.hs for the rationale.
 
--- floating point, eats comments. Default cap is 4 exponent digits, which
--- covers the entire Double range (~1e308). If you need a different cap, use
--- expFloat directly. Most users will want this parser.
-float :: RealFrac f => Parser f
+-- | Decimal scientific-notation parser, eats leading whitespace and comments.
+-- Lenient — accepts integer-shape input (@42@ → @Sci.scientific 42 0@) as
+-- well as fractional and scientific forms. Returns the literal as
+-- 'Data.Scientific.Scientific' (coefficient × 10^exp, exact). Default cap
+-- on exponent length is 4 digits, which covers the entire Double range
+-- (~1e308). For higher or lower caps, use 'expScientific'.
+--
+-- Use 'scientific' (or 'expScientific') when downstream code needs to
+-- (a) preserve the user's exact literal across overflow checks,
+-- (b) distinguish "@42@" from "@42.0@" via 'Sci.isInteger', or
+-- (c) range-check via 'Sci.toBoundedInteger' before narrowing. The
+-- 'float' family below is for source languages that lexically distinguish
+-- integer literals from float literals.
+scientific :: Parser Scientific
+scientific = expScientific 4
+
+-- | Like 'scientific' but with a caller-supplied exponent-length cap.
+-- The cap defends against DoS via pathological inputs like @1e1000000000@.
+-- Most users will want 'scientific' (which is @expScientific 4@).
+expScientific :: Int -> Parser Scientific
+expScientific = token . sci
+
+-- | Floating-point parser, eats leading whitespace and comments. STRICT —
+-- the input must contain a @.@ followed by digits, or an exponent
+-- (@e@/@E@ optionally signed, followed by digits). Bare integer-shape
+-- input fails. Default cap is 4 exponent digits (covers the entire
+-- Double range, ~1e308); use 'expFloat' for a different cap.
+--
+-- Strict semantics match Megaparsec's
+-- 'Text.Megaparsec.Char.Lexer.float'. They are intended for source
+-- languages where @42@ and @42.0@ are lexically distinct tokens.
+-- Callers parsing a language where any numeric form is acceptable
+-- should use 'scientific' (or 'expScientific') instead, which is lenient.
+--
+-- Implementation: parses via the strict 'fp' primitive in Base.hs.
+-- Narrowing to the target RealFloat uses 'Sci.toRealFloat' (IEEE
+-- correctly-rounded conversion). Out-of-range inputs return @Infinity@
+-- or @0@ per IEEE 754.
+float :: RealFloat f => Parser f
 float = expFloat 4
 
--- floating point, eats comments
--- The Int argument is the maximum number of digits allowed in the exponent
--- portion of the input (e.g. expLen=4 accepts "1e9999" but rejects "1e10000").
--- The cap defends against DoS via huge intermediate Integers inside readFloat.
--- Most users won't need expFloat and will just use "float".
-expFloat :: RealFrac f => Int -> Parser f
-expFloat expLen = token $ fp expLen
+-- | Like 'float' but with a caller-supplied exponent-length cap. The cap
+-- counts input *digits*, not the parsed value, so leading zeros count.
+-- Most users won't need this and will just use 'float'.
+expFloat :: RealFloat f => Int -> Parser f
+expFloat = token . fp

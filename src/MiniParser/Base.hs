@@ -12,7 +12,8 @@ import Data.Char
 import Data.List (foldl')
 import Data.Text (Text)
 import qualified Data.Text as T
-import Numeric (readFloat)
+import Data.Scientific (Scientific)
+import qualified Data.Scientific as Sci
 
 data Error =
   EndOfInput                  |  -- unexpected EOF
@@ -227,38 +228,112 @@ oct = digs isOctDigit 8
 digits :: Parser Text
 digits = pTakeWhile1 isDigit
 
--- raw floating point parser (doesn't eat comments).
--- Lives in Base alongside dec/hex/oct/bin because it's a primitive that
--- doesn't depend on comment handling. The whitespace-stripping wrappers
--- (float, expFloat) live in Parser.hs since they call token.
+-- ── Numeric primitives: scientific and floating-point ──────────────────
+-- These live in Base alongside dec/hex/oct/bin because they don't depend
+-- on comment handling. The whitespace/comment-stripping wrappers (scientific,
+-- expScientific, float, expFloat) live in MiniParser.Parser.
 --
--- The exponent length cap is enforced as a HARD failure: exceeding it rejects
--- the whole input rather than silently dropping the exponent. An absent or
--- ill-formed exponent prefix (e.g. "3e", "3eX") is still tolerated and parses
--- as the leading number with the rest left in the remainder.
-fp :: RealFrac r => Int -> Parser r
-fp expLen = do
+-- The shape:
+--   - 'sci'  is LENIENT:  accepts integer-shape input (@42@ → 42).
+--   - 'fp'   is STRICT:   requires '.' digits or 'e'/'E' digits, matching
+--                         Megaparsec's 'Text.Megaparsec.Char.Lexer.float'.
+--                         Bare integer-shape input fails so the user reaches
+--                         for 'sci'/'scientific' explicitly when they want
+--                         lenient parsing.
+-- Both share the digit-shape parser 'sciParts' below, so the cap discipline
+-- and remainder behaviour stay in lockstep.
+
+-- | Internal API which parses the component parts making up a scientific number.
+-- Returns @(integerDigits, fractionalDigits, optionalExponent)@. Always
+-- requires at least one integer digit; fractional and exponent parts are
+-- both optional. The exponent-length cap (expCap) is enforced as a HARD failure.
+-- That is, exceeding expCap rejects the whole input rather than backtracking.
+--
+-- sciParts is used by 'sci' (lenient) and 'fp' (strict). sciParts is not exported.
+-- Users should call 'sci' or 'fp' instead.
+sciParts :: Int -> Parser (Text, Text, Maybe Int)
+sciParts expCap = do
   whole  <- digits
-  frac   <- (T.cons '.' <$> (char '.' *> digits)) <|> pure T.empty
-  -- pExp succeeds only when e/E is followed by an (optional) sign and at
-  -- least one digit. We keep the "exponent is optional" backtrack but lift
-  -- the cap check OUTSIDE the <|> so exceeding the cap is a hard fail.
+  -- fracDs holds JUST the digits after the dot, not the dot itself, so we
+  -- can compute the coefficient and adjusted exponent without rejoining.
+  fracDs <- (char '.' *> digits) <|> pure T.empty
+  -- pExp returns (digit-count, parsed Int value with sign applied). The cap
+  -- check is OUTSIDE the <|> so exceeding it is a hard fail (does not
+  -- backtrack into "no exponent"). Lazy evaluation prevents the parsed Int
+  -- value from being computed when the cap check would reject anyway.
   expoR  <- (Just <$> pExp) <|> pure Nothing
-  expo   <- case expoR of
-    Just (n, _)      | n > expLen ->
-      pFailStr ("exponent length (" ++ show n ++ ") > " ++ show expLen)
-    Just (_, lexeme) -> pure lexeme
-    Nothing          -> pure T.empty
-  let str = T.unpack (whole <> frac <> expo)
-  case readFloat str of
-    [(x, "")] -> pure x
-    _fail     -> pFailStr ("invalid floating point number: " ++ str)
+  case expoR of
+    Just (n, _) | n > expCap ->
+      pFailStr ("exponent length (" ++ show n ++ ") > " ++ show expCap)
+    _ -> pure ()
+  pure (whole, fracDs, fmap snd expoR)
   where
+    pExp :: Parser (Int, Int)
     pExp = do
-      e    <- char 'e' <|> char 'E'
-      sign <- (T.singleton <$> (char '+' <|> char '-')) <|> pure T.empty
+      _    <- char 'e' <|> char 'E'
+      sign <- (char '-' *> pure (-1)) <|> (char '+' *> pure 1) <|> pure 1
       ds   <- digits
-      pure (T.length ds, T.cons e (sign <> ds))
+      pure (T.length ds, sign * fromInteger (digitsToInteger ds))
+
+-- | Internal: build a 'Scientific' from 'sciParts' output.
+buildScientific :: (Text, Text, Maybe Int) -> Scientific
+buildScientific (whole, fracDs, expo) =
+    Sci.scientific coeff adjE
+  where
+    coeff = digitsToInteger (whole <> fracDs)
+    adjE  = maybe 0 id expo - T.length fracDs
+
+-- | Raw scientific-number parser (doesn't eat comments). Lenient — accepts
+-- integer-shape input as a valid scientific value (@parse sci "42"@ produces
+-- @Sci.scientific 42 0@). Returns the literal as a 'Data.Scientific.Scientific'
+-- (coefficient × 10^exponent, exact), losslessly preserving the input.
+--
+-- Use 'sci' (or 'scientific'/'expScientific' from MiniParser.Parser) when
+-- you want to parse any numeric form and decide later — e.g. distinguish
+-- @42@ from @42.0@ via 'Sci.isInteger', or range-check via
+-- 'Sci.toBoundedInteger' before narrowing. For strict-fractional input
+-- (Megaparsec's @float@ semantics), use 'fp' instead.
+--
+-- The exponent length cap is enforced as a hard failure: exceeding it rejects
+-- the whole input. An absent or ill-formed exponent prefix (e.g. @3e@,
+-- @3eX@) is tolerated — the leading number is consumed and the rest left
+-- in the remainder.
+--
+-- The parser does not consume a leading sign; compose with 'signed' for
+-- signed input (matching the convention used by the integer parsers).
+sci :: Int -> Parser Scientific
+sci = fmap buildScientific . sciParts
+
+-- | Raw floating-point parser (doesn't eat comments). Strict-fractional —
+-- the input must contain a @.@ followed by digits, or an exponent
+-- (@e@/@E@ optionally signed, followed by digits). Bare integer-shape
+-- input fails. This matches Megaparsec's
+-- 'Text.Megaparsec.Char.Lexer.float'.
+--
+-- Use 'fp' (or 'float'/'expFloat' from MiniParser.Parser) when the source
+-- language distinguishes integer literals from float literals lexically
+-- (@42@ vs @42.0@). For lenient parsing — accept any numeric shape and
+-- decide later — use 'sci'/'scientific'.
+--
+-- Implementation: parses to 'Scientific' via the shared 'sciParts'
+-- helper, asserts that at least one of fractional or exponent is present,
+-- then narrows via 'Sci.toRealFloat' (IEEE correctly-rounded).
+--
+-- Type narrowed in 0.5.1.0 from @RealFrac r@ to @RealFloat r@; semantics
+-- narrowed to strict-fractional in 0.5.2.0.
+fp :: RealFloat r => Int -> Parser r
+fp expCap = do
+  parts@(_, fracDs, expo) <- sciParts expCap
+  case (T.null fracDs, expo) of
+    (True, Nothing) -> empty   -- bare integer-shape input — reject
+    _otherwise      -> pure ()
+  pure (Sci.toRealFloat (buildScientific parts))
+
+-- | Convert a digit-only Text to Integer via left-fold. Always succeeds on
+-- input that 'digits' produces (only ASCII '0'..'9'). O(n) time and memory.
+digitsToInteger :: Text -> Integer
+digitsToInteger = T.foldl' step 0
+  where step acc c = acc * 10 + fromIntegral (fromEnum c - fromEnum '0')
 
 -- common digit string parser used by dec, hex and bin
 -- digs digTest pmult:

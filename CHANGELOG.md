@@ -1,5 +1,62 @@
 # Revision history for MiniParser
 
+## 0.5.2.0 -- 2026-05-01
+
+* **Breaking — `fp`, `float`, and `expFloat` are now strict-fractional.**
+  The input must contain a `.` followed by digits, or an `e`/`E` (optionally
+  signed) followed by digits. Bare integer-shape input (e.g. `42`) now
+  fails. This matches the semantics of Megaparsec's
+  `Text.Megaparsec.Char.Lexer.float`. Source languages that lexically
+  distinguish integer literals from float literals get the right behaviour
+  by default; callers that want lenient parsing should switch to
+  `scientific`/`expScientific` (which remain lenient and accept
+  integer-shape input as @Sci.scientific n 0@).
+* The shared digit-shape parsing logic is factored into a private
+  `sciParts` helper in `MiniParser.Base`. Both `sci` (lenient) and `fp`
+  (strict) build on it, so the exponent-length cap discipline and the
+  remainder-on-trailing-junk behaviour stay in lockstep across the two.
+* The strictness check happens after `sciParts` succeeds, so inputs like
+  `3..5`, `3.`, `3e`, `3e+`, `3eX` — which under the old lenient `fp`
+  parsed as `3.0` with the partial component left in the remainder — now
+  reject the whole input. Callers depending on the prior lenient
+  partial-consume behaviour should switch to `signed scientific`
+  (which preserves the prior consume-then-leave-remainder pattern).
+* `MiniParser.Parser`'s `expFloat` now composes `token . fp` directly
+  instead of `fmap Sci.toRealFloat . expScientific`. This is a
+  consequence of `fp` being strict while `expScientific` stays lenient —
+  the two are no longer equivalent up to type narrowing.
+
+## 0.5.1.0 -- 2026-04-30
+
+* Added scientific-number parsers: `sci :: Int -> Parser Scientific` (raw,
+  exported from `MiniParser.Base`), `scientific :: Parser Scientific` and
+  `expScientific :: Int -> Parser Scientific` (comment-eating, exported from
+  `MiniParser.Parser`). They produce a `Data.Scientific.Scientific` value
+  (coefficient × 10^exponent, exact representation), preserving the input
+  literal losslessly. Useful for compiler frontends and any caller that
+  wants to (a) round-trip a numeric literal across overflow checks,
+  (b) distinguish "@42@" from "@42.0@" via `Sci.isInteger`, or
+  (c) range-check via `Sci.toBoundedInteger` before narrowing to a
+  specific numeric type. Same exponent-length cap discipline as the
+  float parsers: default cap is 4 digits via `scientific`, overrideable
+  via `expScientific n`.
+* New dependency: the `scientific` package (>=0.3 && <0.4). The package
+  is small (~600 LOC, no transitive baggage beyond `text` and `binary`).
+* `fp`, `float`, and `expFloat` are now thin wrappers over the scientific
+  primitives. They parse to `Scientific` and narrow via `Sci.toRealFloat`,
+  which performs IEEE-correctly-rounded conversion. Same observable
+  behaviour for all in-range `Double`/`Float` inputs; the existing 62-test
+  float suite passes unchanged. The change replaces the previous
+  `Numeric.readFloat`-based path, eliminating an unbounded `Rational`
+  intermediate and shortening the conversion chain.
+* **Breaking** — `fp`, `float`, `expFloat` type signatures narrowed from
+  `RealFrac r =>` to `RealFloat r =>`. `Sci.toRealFloat` is RealFloat-
+  constrained, so the polymorphism over Rational has been dropped.
+  Callers wanting `Rational` should switch to `Sci.toRational <$> sci n`
+  (raw) or `Sci.toRational <$> scientific` (comment-eating). In practice
+  Rational targets are rare in float-parsing code; Double and Float
+  remain unaffected.
+
 ## 0.5.0.0 -- 2026-04-30
 
 * **Breaking — MHS (MicroHs) support is dropped.** v0.5.0.0 and later are

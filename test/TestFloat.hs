@@ -47,18 +47,20 @@ parseFail p inp =
 -- ---------------------------------------------------------------------------
 
 rawTests :: Test
-rawTests = TestLabel "fp (raw, cap = 9)" $ TestList
-  -- happy path: integers
-  [ "0"             ~: parseEq (fp 9) "0"           0.0     ""
-  , "42"            ~: parseEq (fp 9) "42"          42.0    ""
-  , "leading zeros" ~: parseEq (fp 9) "007"         7.0     ""
-  -- decimals
+rawTests = TestLabel "fp (raw, cap = 9, strict-fractional)" $ TestList
+  -- Strict-fractional rejects bare integer-shape input. The input must
+  -- have a '.' digits or an 'e'/'E' digits component (or both). This
+  -- matches Megaparsec's Text.Megaparsec.Char.Lexer.float semantics.
+  [ "bare 0 rejected (no frac, no exp)"           ~: parseFail (fp 9) "0"
+  , "bare 42 rejected (no frac, no exp)"          ~: parseFail (fp 9) "42"
+  , "leading zeros bare rejected"                 ~: parseFail (fp 9) "007"
+  -- decimals (have '.' digits, accepted)
   , "3.14"          ~: parseEq (fp 9) "3.14"        3.14    ""
   , "0.5"           ~: parseEq (fp 9) "0.5"         0.5     ""
   , "00.50"         ~: parseEq (fp 9) "00.50"       0.5     ""
   , "many fractional digits"
                     ~: parseEq (fp 9) "0.123456789" 0.123456789 ""
-  -- exponents
+  -- exponents (have 'e' digits, accepted even without '.')
   , "3e5"           ~: parseEq (fp 9) "3e5"         3e5     ""
   , "3E5"           ~: parseEq (fp 9) "3E5"         3e5     ""
   , "3e+5"          ~: parseEq (fp 9) "3e+5"        3e5     ""
@@ -66,16 +68,26 @@ rawTests = TestLabel "fp (raw, cap = 9)" $ TestList
   , "3.14e2"        ~: parseEq (fp 9) "3.14e2"      314.0   ""
   , "3.14e-2"       ~: parseEq (fp 9) "3.14e-2"     0.0314  ""
   , "0e0"           ~: parseEq (fp 9) "0e0"         0.0     ""
-  -- remainders (lenient)
+  -- remainders: trailing junk after a valid frac is lenient (consumed
+  -- only up through the valid number).
   , "trailing letters"      ~: parseEq (fp 9) "3.14abc"   3.14 "abc"
   , "trailing space"        ~: parseEq (fp 9) "3.14 r"    3.14 " r"
   , "trailing dot+digits"   ~: parseEq (fp 9) "3.5.7"     3.5  ".7"
-  , "double dot"            ~: parseEq (fp 9) "3..5"      3.0  "..5"
-  , "trailing dot only"     ~: parseEq (fp 9) "3."        3.0  "."
-  , "e but no digits"       ~: parseEq (fp 9) "3e"        3.0  "e"
-  , "e then sign no digits" ~: parseEq (fp 9) "3e+"       3.0  "e+"
-  , "e then non-digit"      ~: parseEq (fp 9) "3eX"       3.0  "eX"
-  -- failures
+  -- These previously parsed as bare-integer 3 with the partial component
+  -- in the remainder. Under strict semantics, the resulting "no frac, no
+  -- exp" shape is rejected as a whole (the parser does not commit to a
+  -- bare integer because that would be lenient).
+  , "double dot rejected (3 with no valid frac)"
+                            ~: parseFail (fp 9) "3..5"
+  , "trailing dot only rejected (3 with no valid frac)"
+                            ~: parseFail (fp 9) "3."
+  , "e but no digits rejected (3 with no valid exp)"
+                            ~: parseFail (fp 9) "3e"
+  , "e then sign no digits rejected"
+                            ~: parseFail (fp 9) "3e+"
+  , "e then non-digit rejected"
+                            ~: parseFail (fp 9) "3eX"
+  -- failures (unchanged from prior strict-or-lenient surface)
   , "empty"            ~: parseFail (fp 9) ""
   , "letters only"     ~: parseFail (fp 9) "abc"
   , "leading dot"      ~: parseFail (fp 9) ".5"
@@ -109,12 +121,15 @@ capTests = TestLabel "exponent cap (DoS guard)" $ TestList
   ]
 
 floatTests :: Test
-floatTests = TestLabel "float (token-aware, default cap = 4)" $ TestList
+floatTests = TestLabel "float (token-aware, default cap = 4, strict-fractional)" $ TestList
   [ "leading whitespace" ~: parseEq float "  3.14"        3.14  ""
   , "leading newline"    ~: parseEq float "\n\t3.14"      3.14  ""
   , "line comment"       ~: parseEq float "-- nope\n3.14" 3.14  ""
   , "block comment"      ~: parseEq float "{- gone -}3.14" 3.14 ""
-  , "bare number"        ~: parseEq float "42"            42.0  ""
+  -- Strict-fractional: bare integer rejected. Use 'scientific' for lenient.
+  , "bare integer rejected" ~: parseFail float "42"
+  , "exponent-only accepted" ~: parseEq float "42e0" 42.0 ""
+  , "fractional accepted"    ~: parseEq float "42.0" 42.0 ""
   , "4-digit exp accepted (Infinity)" ~: parseEq float "1e9999" (1/0) ""
   , "5-digit exp rejected" ~: parseFail float "1e10000"
   , "10-digit exp rejected" ~: parseFail float "1e1000000000"
