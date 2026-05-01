@@ -5,7 +5,80 @@
 --   Comments.hs needs the Parser type (to define comments :: Parser ())
 --   Parser.hs needs Comments.hs (to use comments inside token, identifierHaskell, etc.)
 -- Base holds the types and primitives that both modules need.
-module MiniParser.Base where
+module MiniParser.Base
+  ( -- * Types
+    Parser(..)
+  , PState(..)
+  , Pos(..)
+  , Error(..)
+
+    -- * Running parsers
+  , parse
+
+    -- * Position tracking
+  , initPos
+  , advanceChar
+  , advanceText
+  , getPos
+
+    -- * Backtracking
+  , try
+
+    -- * Character primitives
+  , item
+  , satisfy
+  , digit
+  , lower
+  , upper
+  , letter
+  , alphanum
+  , char
+  , string
+
+    -- * Haskell identifier
+  , identHaskell
+
+    -- * Numeric parsers (raw, no comment-stripping)
+  , dec
+  , hex
+  , oct
+  , bin
+  , digs
+  , digits
+  , sci
+  , fp
+
+    -- * Whitespace
+  , space
+
+    -- * Look-ahead
+  , lookAhead
+  , lookAheadMulti
+
+    -- * Take-until / take-while
+  , takeUntil
+  , takeUntil'
+  , takeUntilStr
+  , takeUntilStr'
+  , takeUntilEOL
+  , takeUntilEOL'
+  , takeAll
+  , pTakeWhile
+  , pTakeWhile1
+
+    -- * Combinators
+  , eof
+  , choice
+  , pDiscard
+  , sepBy
+  , sepBy1
+  , nestedBlockComment
+
+    -- * Error reporting
+  , pFailStr
+  , pFail
+  , errorsToString
+  ) where
 
 import Control.Applicative
 import Data.Char
@@ -243,14 +316,15 @@ digits = pTakeWhile1 isDigit
 -- Both share the digit-shape parser 'sciParts' below, so the cap discipline
 -- and remainder behaviour stay in lockstep.
 
--- | Internal API which parses the component parts making up a scientific number.
+-- | Internal: parses the component parts of a scientific-notation number.
 -- Returns @(integerDigits, fractionalDigits, optionalExponent)@. Always
 -- requires at least one integer digit; fractional and exponent parts are
--- both optional. The exponent-length cap (expCap) is enforced as a HARD failure.
--- That is, exceeding expCap rejects the whole input rather than backtracking.
+-- both optional. The exponent-length cap (expCap) is enforced as a HARD
+-- failure — exceeding expCap rejects the whole input rather than
+-- backtracking.
 --
--- sciParts is used by 'sci' (lenient) and 'fp' (strict). sciParts is not exported.
--- Users should call 'sci' or 'fp' instead.
+-- Used by 'sci' (lenient) and 'fp' (strict). Not exported by the module
+-- export list; callers should use 'sci' or 'fp'.
 sciParts :: Int -> Parser (Text, Text, Maybe Int)
 sciParts expCap = do
   whole  <- digits
@@ -275,7 +349,7 @@ sciParts expCap = do
       ds   <- digits
       pure (T.length ds, sign * fromInteger (digitsToInteger ds))
 
--- | Internal: build a 'Scientific' from 'sciParts' output.
+-- | Internal: build a 'Scientific' from 'sciParts' output. Not exported.
 buildScientific :: (Text, Text, Maybe Int) -> Scientific
 buildScientific (whole, fracDs, expo) =
     Sci.scientific coeff adjE
@@ -329,8 +403,9 @@ fp expCap = do
     _otherwise      -> pure ()
   pure (Sci.toRealFloat (buildScientific parts))
 
--- | Convert a digit-only Text to Integer via left-fold. Always succeeds on
--- input that 'digits' produces (only ASCII '0'..'9'). O(n) time and memory.
+-- | Internal: convert a digit-only Text to Integer via left-fold.
+-- Always succeeds on input that 'digits' produces (only ASCII '0'..'9').
+-- O(n) time and memory. Not exported.
 digitsToInteger :: Text -> Integer
 digitsToInteger = T.foldl' step 0
   where step acc c = acc * 10 + fromIntegral (fromEnum c - fromEnum '0')

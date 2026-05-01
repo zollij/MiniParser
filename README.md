@@ -32,7 +32,9 @@ to code something useful from scratch.
   - [Running Parsers](#running-parsers)
   - [Raw Parsers](#raw-parsers)
   - [Whitespace & Comment Stripping Parsers](#whitespace--comment-stripping-parsers)
-  - [Floating-Point Parsers](#floating-point-parsers)
+  - [Numeric Parsers: Float vs Scientific](#numeric-parsers-float-vs-scientific)
+  - [Floating-Point Parsers (token-aware)](#floating-point-parsers-token-aware)
+  - [Scientific Parsers (token-aware)](#scientific-parsers-token-aware)
   - [Look-Ahead Parsers](#look-ahead-parsers)
   - [Take-Until & Take-While Parsers](#take-until--take-while-parsers)
   - [Combinator Parsers](#combinator-parsers)
@@ -90,10 +92,17 @@ main = do
   print $ parse (signed hexidecimal) "  -0xff"
   -- Right (-255,"")
 
-  -- Floating-point: `float` strips whitespace/comments and accepts
-  -- a 4-digit exponent. Compose with `signed` for an optional sign.
+  -- Floating-point: `float` is strict-fractional (input must have a `.`
+  -- or an `e/E` exponent). Compose with `signed` for an optional sign.
   print $ parse (signed float :: Parser Double) "  -3.14e2"
   -- Right (-314.0,"")
+
+  -- Scientific: lenient (accepts integer-shape input) and lossless
+  -- (preserves the exact literal as coefficient × 10^exponent).
+  print $ parse (signed scientific) "  -3.14e2"
+  -- Right (-314.0,"")
+  print $ parse scientific "42"
+  -- Right (42.0,"")    -- bare integer accepted; `float` would reject this
 ```
 
 Note: The `OverloadedStrings` extension lets you write string literals that
@@ -128,7 +137,8 @@ There are 9 test suites defined in `MiniParser.cabal`:
 | `comments-jack-test`     | `examples/TestJack.hs` | 20   | Jack comment parser tests |
 | `comments-java-test`     | `examples/TestJava.hs` | 20   | Java comment parser tests |
 | `comments-kotlin-test`   | `examples/TestKotlin.hs` | 27 | Kotlin comment parser tests |
-| `float-test`             | `test/TestFloat.hs`    | 62  | Floating-point parser tests (HUnit + QuickCheck), including DoS exponent cap |
+| `float-test`             | `test/TestFloat.hs`    | 64  | Strict-fractional float parser tests (HUnit + QuickCheck), including DoS exponent cap |
+| `scientific-test`        | `test/TestScientific.hs` | 67 | Lenient scientific-number parser tests (lossless coefficient/exponent preservation) |
 | `perf-test`              | `test/TestPerf.hs`     | 20  | Performance and large-input tests |
 
 Run all suites with `make test`.
@@ -154,10 +164,10 @@ MiniParser/
 ├── .gitignore                        -- Git ignore rules
 ├── src/
 │   └── MiniParser/
-│       ├── Base.hs                   -- Parser type, primitives, raw numeric parsers (dec/hex/oct/bin/fp)
+│       ├── Base.hs                   -- Parser type, primitives, raw numeric parsers (dec/hex/oct/bin/fp/sci)
 │       ├── Comments.hs               -- Default comment parser (Haskell: --, {- -})
 │       ├── ExprParser.hs             -- Expression parser (buildExprParser, Operator)
-│       ├── Parser.hs                 -- Re-exports Base + comment-aware parsers (token, decimal, signed, float, ...)
+│       ├── Parser.hs                 -- Re-exports Base + comment-aware parsers (token, decimal, signed, float, scientific, ...)
 │       └── Comments/
 │           ├── C.hs                  -- C-style comments: //, /* */
 │           ├── Haskell.hs            -- Haskell comments: --, {- -} (nested)
@@ -168,7 +178,8 @@ MiniParser/
 │   ├── Test.hs                       -- Main test suite (HUnit + QuickCheck)
 │   ├── PosTests.hs                   -- Position-tracking tests (other-modules of MiniParser-test)
 │   ├── TestExprParser.hs             -- Expression parser tests
-│   ├── TestFloat.hs                  -- Floating-point parser tests (HUnit + QuickCheck)
+│   ├── TestFloat.hs                  -- Strict-fractional float parser tests (HUnit + QuickCheck)
+│   ├── TestScientific.hs             -- Lenient Scientific parser tests (HUnit)
 │   ├── TestPerf.hs                   -- Performance and large-input tests
 │   └── TestHelpers.hs                -- Shared test utilities (stripPos, test)
 └── examples/
@@ -184,12 +195,14 @@ MiniParser/
 **`src/MiniParser/Base.hs`** -- The foundation of the library. Contains the
 `Parser` newtype, `Error` type, `Functor`/`Applicative`/`Monad`/`Alternative`
 instances, and all low-level parser primitives (`item`, `satisfy`, `char`,
-`string`, `digit`, `letter`, `digits`, etc.). Houses every numeric parser
-that doesn't need comment-handling: `dec`, `hex`, `oct`, `bin`, `digs`, and
-`fp` (the raw float parser). Also contains `pDiscard` (the engine for
-comment stripping), look-ahead parsers, take-until parsers, `choice`, and
-utility functions. This module has no dependency on any comment parser. The
-parse stream type is `Text` (from `Data.Text`).
+`string`, `digit`, `letter`, `digits`, `identHaskell`, etc.). Houses every
+numeric parser that doesn't need comment-handling: `dec`, `hex`, `oct`,
+`bin`, `digs`, plus `fp` (strict-fractional float parser, returns
+`RealFloat`) and `sci` (lenient `Scientific` parser, lossless). Also
+contains `pDiscard` (the engine for comment stripping), look-ahead parsers,
+take-until parsers, `choice`, and utility functions. This module has no
+dependency on any comment parser. The parse stream type is `Text` (from
+`Data.Text`).
 
 **`src/MiniParser/ExprParser.hs`** -- Expression parser module, inspired by
 Parsec's `buildExpressionParser`. Exports the `Operator` type (with
@@ -211,10 +224,12 @@ everything from `Base` and adds the higher-level parsers that depend on
 comment-handling: `token`, `identifierHaskell`, `decimal`, `hexidecimal`,
 `octal`, `binary`, `signed`, `symbol`, `character`, `delimList`, `trim`,
 `row`, `splitLines`, `splitLinesT`, `letters`, plus the comment-stripping
-floating-point wrappers `float` and `expFloat`. The raw `fp` parser lives
-in `Base.hs` (no comment handling needed) and is re-exported here, so
-callers see the full numeric API in one module — matching Megaparsec's
-`Char.Lexer` and Attoparsec's `Data.Attoparsec.Text` consolidation.
+numeric wrappers `float` / `expFloat` (strict-fractional, `RealFloat`) and
+`scientific` / `expScientific` (lenient, `Data.Scientific.Scientific`).
+The raw `fp` and `sci` parsers live in `Base.hs` (no comment handling
+needed) and are re-exported here, so callers see the full numeric API
+in one module — matching Megaparsec's `Char.Lexer` and Attoparsec's
+`Data.Attoparsec.Text` consolidation.
 
 **`src/MiniParser/Comments/C.hs`** -- C-style comment parser. Handles
 end-of-line comments (`// ...`) and inline block comments (`/* ... */`).
@@ -252,13 +267,20 @@ expressions, whitespace handling, minimal operator table configurations,
 and intentional parse failures (trailing operators, unmatched parentheses,
 chained non-associative operators, etc.).
 
-**`test/TestFloat.hs`** -- Floating-point parser test suite for the `float`
-/ `expFloat` / `fp` parsers (now exported from `MiniParser.Parser`). Covers
-the parsers and their composition with `signed`, the exponent-length DoS
-guard (inputs like `1e1000000000` reject in microseconds rather than
-allocating a giant `Integer` inside `readFloat`), and a QuickCheck round-trip
-property (`show` then parse via `signed float` for any `Double` in
-`[-1e30, 1e30]`).
+**`test/TestFloat.hs`** -- Strict-fractional float parser test suite for
+`float` / `expFloat` / `fp`. Covers the strict semantics (rejects bare
+integer-shape input matching Megaparsec's `float`), composition with
+`signed`, the exponent-length DoS guard (inputs like `1e1000000000`
+reject in microseconds), and a QuickCheck round-trip property (`show`
+then parse via `signed float` for any `Double` in `[-1e30, 1e30]`).
+
+**`test/TestScientific.hs`** -- Lenient `Scientific` parser test suite
+for `scientific` / `expScientific` / `sci`. Covers the lenient semantics
+(accepts bare integer input as `Sci.scientific n 0`), lossless
+coefficient/exponent preservation across the full Scientific range,
+the `Sci.isInteger` distinction between `42` and `42.0`, the
+`Sci.toBoundedInteger` overflow-check pattern, and the same DoS
+exponent-cap discipline shared with the float parsers.
 
 **`test/TestPerf.hs`** -- Performance and large-input tests. Generates
 configurable-size inputs (100KB+ at default scale) and verifies both
@@ -465,7 +487,8 @@ These operate directly on input without stripping whitespace or comments.
 | `digs` | `Num a => (Char -> Bool) -> a -> Parser a` | Shared digit-folding primitive: take chars matching the predicate, fold into `a` using the given positional multiplier. Used by `dec`/`hex`/`oct`/`bin`. |
 | `digits` | `Parser Text` | One or more digits as `Text` (efficient alternative to `many digit`) |
 | `letters` | `Parser Text` | One or more letters as `Text` (efficient alternative to `many letter`). Defined in `Parser.hs`, re-exported. |
-| `fp` | `RealFrac r => Int -> Parser r` | Raw floating-point parser (does not strip whitespace). Accepts a digit run, optional `.digits`, optional `e`/`E[+-]?digits`. The `Int` argument caps the number of digits allowed in the exponent and bounds the intermediate `Integer` allocation inside `readFloat`; exceeding the cap is a hard parse failure. Does not handle a leading sign — compose with `signed`. |
+| `sci` | `Int -> Parser Scientific` | Raw scientific-number parser (does not strip whitespace). **Lenient** — accepts integer-shape input (`"42"` → `Sci.scientific 42 0`), `.digits` fractional input, and `e`/`E[+-]?digits` exponents in any combination. Returns a lossless `Data.Scientific.Scientific`. The `Int` argument caps the number of digits allowed in the exponent (DoS guard); exceeding the cap is a hard parse failure. Does not handle a leading sign — compose with `signed`. |
+| `fp` | `RealFloat r => Int -> Parser r` | Raw floating-point parser (does not strip whitespace). **Strict-fractional** — input must contain `.<digits>` *or* an `e`/`E` exponent; bare integer-shape input fails. Matches Megaparsec's `Text.Megaparsec.Char.Lexer.float`. Result is narrowed from the underlying `Scientific` via `Sci.toRealFloat` (IEEE correctly-rounded). The `Int` argument caps the exponent length (DoS guard). Does not handle a leading sign — compose with `signed`. |
 
 ### Whitespace & Comment Stripping Parsers
 
@@ -495,17 +518,73 @@ before parsing.
 > constraints to `Integer`, so an annotation is only needed when defaulting
 > can't apply.
 
+### Numeric Parsers: Float vs Scientific
+
+MiniParser ships two parallel numeric parser families. Pick based on
+*shape strictness* and *result type*:
+
+|                        | Lenient (accepts `"42"`) | Strict (requires `.` or `e/E`) |
+|------------------------|--------------------------|--------------------------------|
+| **Result: `RealFloat r`** | — *(use `fmap Sci.toRealFloat scientific` if you need this combination)* | `float`, `expFloat`, `fp` |
+| **Result: `Scientific`** | `scientific`, `expScientific`, `sci` | — *(use `signed scientific` and reject integer shape downstream if needed)* |
+
+- **Use `float` / `expFloat` / `fp`** when the source language lexically
+  distinguishes integer literals from float literals (`42` is *not* a
+  float in C, Haskell, JSON, …) and you want a `Double`/`Float` result.
+- **Use `scientific` / `expScientific` / `sci`** when you want any
+  numeric form accepted and the *exact literal* preserved (no IEEE
+  rounding, distinguish `42` from `42.0` via `Sci.isInteger`,
+  range-check via `Sci.toBoundedInteger` before narrowing).
+
+All six parsers share the same exponent-length cap discipline and the
+same lenient remainder behaviour for ill-formed exponent prefixes
+(`"3e"`, `"3eX"` leave the prefix in the remainder). The strict family
+*additionally* rejects bare integer-shape input.
+
+The raw parsers (`fp`, `sci`) live in `MiniParser.Base` and are
+documented in [Raw Parsers](#raw-parsers); the comment-stripping
+wrappers documented below live in `MiniParser.Parser`.
+
 ### Floating-Point Parsers (token-aware)
 
-These are the comment-stripping wrappers around the raw `fp` parser
-(documented above in [Raw Parsers](#raw-parsers)). All three are
-polymorphic over `RealFrac` so the result can be specialized to `Double`,
-`Float`, or `Rational` at the call site.
+Strict-fractional. Comment-stripping wrappers around `fp`. The result
+is constrained to `RealFloat` (narrows via `Sci.toRealFloat`,
+IEEE correctly-rounded).
 
 | Parser | Type | Description |
 |--------|------|-------------|
-| `float` | `RealFrac f => Parser f` | `expFloat 4` -- strips whitespace/comments, parses an unsigned decimal float, with a 4-digit exponent cap that covers all of `Double` (~`1e308`) and bounds `readFloat`'s worst-case allocation to ~4 KB. |
-| `expFloat` | `RealFrac f => Int -> Parser f` | `token (fp n)` -- strips whitespace/comments, then parses with a caller-supplied exponent-digit cap. Use this when you need a cap different from `float`'s default of 4 (e.g. for `Rational` results that can represent magnitudes well beyond `Double`). |
+| `float` | `RealFloat f => Parser f` | `expFloat 4` — strips whitespace/comments, parses a strict-fractional decimal float, with a 4-digit exponent cap that covers all of `Double` (~`1e308`). Bare integer-shape input fails. |
+| `expFloat` | `RealFloat f => Int -> Parser f` | `token (fp n)` — strips whitespace/comments, then parses with a caller-supplied exponent-digit cap. Use when you need a cap different from `float`'s default of 4. |
+
+> **Migration note (0.5.x):** the type was narrowed from `RealFrac` to
+> `RealFloat` in 0.5.1.0 (the underlying narrowing function
+> `Sci.toRealFloat` is `RealFloat`-constrained). Callers who need
+> `Rational` should use `Sci.toRational <$> scientific` (or
+> `Sci.toRational <$> sci n` for the raw form). Strict-fractional
+> semantics were added in 0.5.2.0; for the prior lenient `fp`, switch
+> to `signed scientific`.
+
+### Scientific Parsers (token-aware)
+
+Lenient. Comment-stripping wrappers around `sci`. The result is
+`Data.Scientific.Scientific` — exact representation as
+*coefficient × 10^exponent*, no rounding.
+
+| Parser | Type | Description |
+|--------|------|-------------|
+| `scientific` | `Parser Scientific` | `expScientific 4` — strips whitespace/comments, parses any decimal numeric form (integer, fractional, or with `e`/`E` exponent), with a 4-digit exponent cap. Default for most callers. |
+| `expScientific` | `Int -> Parser Scientific` | `token (sci n)` — strips whitespace/comments, then parses with a caller-supplied exponent-digit cap. Use this when you need a different cap than `scientific`'s default of 4. |
+
+The `Scientific` result is useful for:
+- **Lossless preservation** of the user's literal across overflow checks
+  (`Sci.toBoundedInteger`, `Sci.toRealFloat`, etc.).
+- **Distinguishing integer-shape from fractional-shape input**: `"42"`
+  parses as `Sci.scientific 42 0` (`Sci.isInteger` returns `True`);
+  `"42.0"` parses as `Sci.scientific 420 (-1)` (`isInteger` returns
+  `False`). The strict-`fp` family loses this distinction by rejecting
+  the former.
+- **Compiler frontends** that need to emit precise diagnostic messages
+  about numeric literals before deciding which target type to use.
 
 ### Look-Ahead Parsers
 

@@ -41,6 +41,8 @@ ghc-test: ghc-build
 	@echo
 	cabal run float-test
 	@echo
+	cabal run scientific-test
+	@echo
 	cabal run perf-test -- $(GHC_PERF_SCALE)
 
 ghc-performance: ghc-build

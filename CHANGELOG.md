@@ -1,5 +1,32 @@
 # Revision history for MiniParser
 
+## 0.6.0.0 -- 2026-05-01
+
+* **Breaking — `MiniParser.Base` now has an explicit export list.** Three
+  helpers that were previously *implicitly* exported (because the module
+  was declared as `module MiniParser.Base where`) are no longer reachable
+  from outside the module: `sciParts`, `buildScientific`, and
+  `digitsToInteger`. Each was already marked `-- Internal:` in source
+  comments, but the documentation didn't match the actual exported
+  surface — Haskell exports every top-level binding when no export list
+  is given. The new export list makes the internal/external boundary
+  load-bearing rather than aspirational. Callers who were depending on
+  any of these three names will need to inline equivalent logic;
+  they were single-call-site helpers shared between `sci` and `fp`,
+  not general-purpose utilities.
+* Makefile bug fix: `make test` now runs the `scientific-test` test
+  suite. The 0.5.1.0 cabal stanza was added correctly but never wired
+  into the `ghc-test` target, so 67 tests were silently skipped on
+  every `make test` invocation since 0.5.1.0.
+* README synced with the current API surface. The Scientific parsers
+  family (`scientific`, `expScientific`, `sci`) added in 0.5.1.0 was
+  not documented; that's now corrected. The Floating-Point Parsers
+  section reflects the 0.5.1.0 `RealFrac` → `RealFloat` narrowing and
+  the 0.5.2.0 strict-fractional semantics. A new "Numeric Parsers:
+  Float vs Scientific" overview section presents the two families as
+  a 2×2 decision matrix (lenient/strict × `RealFloat`/`Scientific`),
+  intended to make the choice obvious for new callers.
+
 ## 0.5.2.0 -- 2026-05-01
 
 * **Breaking — `fp`, `float`, and `expFloat` are now strict-fractional.**
