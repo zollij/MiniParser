@@ -24,6 +24,10 @@ module MiniParser.Base
     -- * Backtracking
   , try
 
+    -- * Error labels and commit
+  , (<?>)
+  , commit
+
     -- * Character primitives
   , item
   , satisfy
@@ -94,7 +98,13 @@ data Error =
   Unexpected' !String         |  -- Unexpected <actual>
   CustomError !String         |  -- other types of errors
   Empty                       |  -- used by Alternative to deal with <|>
-  ExpectedEndOfFile !Char        -- used by eof parser
+  ExpectedEndOfFile !Char     |  -- used by eof parser
+  Labeled !String !Pos        |  -- produced by <?> when a labelled parser fails
+  Committed ![Error]             -- internal marker produced by 'commit';
+                                 -- the Alternative instance propagates this
+                                 -- past <|> rather than backtracking. 'parse'
+                                 -- strips any top-level Committed wrappers so
+                                 -- callers never observe one.
   deriving (Eq, Show)
 
 -- Basic definitions
@@ -158,8 +168,17 @@ getPos = P $ \ps@(PState (Pos row col) _inp) ->
 parse :: Parser a -> Text -> Either [Error] (a, Pos, Text)
 parse (P p) inp =
   case p (PState initPos inp) of
-    Left err                      -> Left err
+    Left err                      -> Left (unwrapCommitted err)
     Right (a, PState pos' rest)   -> Right (a, pos', rest)
+
+-- | Strip top-level 'Committed' wrappers from an error list. The
+-- 'Committed' tag is internal — its only role is to influence '<|>'
+-- behaviour at parse time. Once we've returned to the top of a parse,
+-- callers want to see the underlying errors. Recursive in case a
+-- region was committed multiple times (nested 'commit's).
+unwrapCommitted :: [Error] -> [Error]
+unwrapCommitted [Committed inner] = unwrapCommitted inner
+unwrapCommitted errs              = errs
 
 instance Functor Parser where
    -- fmap :: (a -> b) -> Parser a -> Parser b
@@ -209,16 +228,70 @@ instance Monad Parser where
 instance Alternative Parser where
   empty = P (\_ -> Left [Empty])
   -- (<|>) :: Parser a -> Parser a -> Parser a
+  --
+  -- Backtracking choice. The single 'Left [Committed errs]' shape is the
+  -- marker produced by 'commit'; we propagate that without trying 'q'
+  -- so a parse path that has unambiguously committed reports its real
+  -- failure instead of being masked by the next alternative. Every
+  -- other failure shape backtracks to 'q' (and drops 'p's errors, per
+  -- the design note above).
   P p <|> P q = P
     (\st ->
        case p st of
-         Left _ -> q st
-         Right r -> Right r)
+         Left [Committed errs] -> Left errs
+         Left _                -> q st
+         Right r               -> Right r)
 
 -- MiniParser's <|> always backtracks, so try is a no-op.
 -- It exists for compatibility with Parsec-style grammars.
 try :: Parser a -> Parser a
 try = id
+
+infix 0 <?>
+
+-- | Replace a parser's failure error with a single 'Labeled' carrying
+-- the supplied label and the position where the labelled parser
+-- *started*. A successful parse is unaffected.
+--
+-- Use at choice boundaries to surface a meaningful "expected X here"
+-- diagnostic instead of whatever character-level mismatch the deepest
+-- internal parser happened to produce. Cheap: the label is only
+-- allocated on the failure path, and the success path runs the inner
+-- parser unchanged.
+--
+-- Example:
+--
+-- > numLit  <?> "numeric literal"
+-- > matchExpr <?> "match expression"
+(<?>) :: Parser a -> String -> Parser a
+P p <?> lbl = P
+  (\st@(PState pos _) ->
+     case p st of
+       Left _  -> Left [Labeled lbl pos]
+       Right r -> Right r)
+
+-- | Commit past this parser: if it fails, surrounding '<|>' must
+-- propagate the failure rather than backtrack to the next branch.
+-- Useful when a recognised prefix unambiguously commits the rest of
+-- the parse, so a later mistake surfaces as the real error rather
+-- than as a misleading top-level "no alternative matched" failure.
+--
+-- Implementation detail: a failed @commit p@ wraps the inner errors
+-- in a single 'Committed' marker. The 'Alternative' instance for
+-- 'Parser' detects that marker and propagates instead of backtracking.
+-- 'parse' strips any top-level 'Committed' wrapper so external
+-- callers never observe the marker.
+--
+-- Example: @match \<*\> commit (arms)@ — once the @match@ keyword has
+-- been consumed, a failure parsing @arms@ is reported in place of
+-- whatever fallback alternative the surrounding choice would have
+-- tried.
+commit :: Parser a -> Parser a
+commit (P p) = P
+  (\st ->
+     case p st of
+       Left errs -> Left [Committed errs]
+       Right r   -> Right r)
 
 -- "item" grabs a single Char off the front of the parse stream
 -- and returns it (along with the remainder of the stream.)
@@ -284,17 +357,21 @@ identHaskell = P $ \(PState pos inp) ->
 -- pin down the result type: e.g. `parse (dec :: Parser Integer) "123"`.
 dec :: Num a => Parser a
 dec = digs isDigit 10
+{-# INLINABLE dec #-}
 
 -- parse a hexidecimal (base 16) number
 -- hex assumes we've already parsed the "0x"
 hex :: Num a => Parser a
 hex = digs isHexDigit 16
+{-# INLINABLE hex #-}
 
 bin :: Num a => Parser a
 bin = digs (\c -> c == '0' || c == '1') 2
+{-# INLINABLE bin #-}
 
 oct :: Num a => Parser a
 oct = digs isOctDigit 8
+{-# INLINABLE oct #-}
 
 -- efficient digits implementation, using Text instead of [Char]
 -- use this instead of "many digit"
@@ -415,6 +492,7 @@ digitsToInteger = T.foldl' step 0
 --   digTest:  a (Char -> Bool) test for whether we found a digit
 --   pmult:    positional multiplier, 16 for hex, 10 for decimal, 8 for octal, 2 for binary
 digs :: Num a => (Char -> Bool) -> a -> Parser a
+{-# INLINABLE digs #-}
 digs digTest pmult = P $ \(PState pos inp) ->
   let
     ds = T.takeWhile digTest inp

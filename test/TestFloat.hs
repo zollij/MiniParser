@@ -3,7 +3,7 @@
 module Main where
 
 import MiniParser.Base
-import MiniParser.Parser (signed, fp, float, expFloat)
+import MiniParser.Parser (signed, float, expFloat)
 import TestHelpers
   ( stripPos, runHUnit, runQC, suiteHeader, sectionHeader, summaryLine )
 import Test.HUnit

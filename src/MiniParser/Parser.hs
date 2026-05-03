@@ -84,6 +84,7 @@ signed p = comments *> (negative <|> positive <|> p)
   where
     negative = char '-' *> noSpaceAhead *> (negate <$> p)
     positive = char '+' *> noSpaceAhead *> p
+{-# INLINABLE signed #-}
 
 -- After consuming a sign, require the next character to not be whitespace.
 -- Used by 'signed' to reject inputs like "- 42".

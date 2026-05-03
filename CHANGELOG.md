@@ -1,5 +1,62 @@
 # Revision history for MiniParser
 
+## 0.7.0.0 -- 2026-05-02
+
+* **New combinators: `<?>` and `commit`** for better error reporting at
+  choice boundaries. Both are *additive* — existing parsers compile
+  unchanged.
+  * `(<?>) :: Parser a -> String -> Parser a` replaces a parser's
+    failure with a single `Labeled lbl pos` carrying the label and the
+    position where the labeled parser started. Used to produce
+    "expected an X here" diagnostics instead of whatever character-
+    level mismatch the deepest internal parser happened to surface.
+  * `commit :: Parser a -> Parser a` marks a parse path as committed:
+    if it fails, surrounding `<|>` propagates the failure rather than
+    backtracking to the next alternative. Built on a new internal
+    `Committed [Error]` marker that the `Alternative` instance for
+    `Parser` recognises and strips. `parse` unwraps any top-level
+    `Committed` so callers never observe the marker directly.
+  * `Error` gains two constructors: `Labeled !String !Pos` and
+    `Committed ![Error]`. Pattern-matching code that explicitly listed
+    every `Error` constructor will get a non-exhaustive-match warning
+    and need to add the new cases.
+  * Performance: zero measurable regression on the existing
+    `perf-test` suite (all 20 tests at the same timings as 0.6.0.0).
+    The `<|>` instance gains one extra pattern match on its failure
+    path — a head-of-list check for the `Committed` marker — which is
+    constant-time and only runs when an alternative has already
+    failed. The success path is byte-identical.
+  * Documentation: new "Error Labeling and Cut" section in `README.md`
+    with worked examples for both combinators, a "scope of `commit`"
+    note, and an explicit rule-of-thumb that **`commit` goes on the
+    outside, `<?>` on the inside** — putting `<?>` outside `commit`
+    silently discards the `Committed` marker.
+  * Tests: 13 adversarial cases added to `test/Test.hs` covering
+    nested-label override, `<?>` over `empty` / `pFailStr` / `eof`,
+    triple-nested `commit`, scope-after-success, `commit empty`,
+    nested-`<|>` commit propagation, and two documented footguns
+    (the `<?>`-outside-`commit` order trap, and `commit` inside
+    `many` being stripped at the inner `<|>`). Suite count is
+    now 338 (was 313 in 0.6.0.0).
+
+* **`INLINABLE` pragmas on numeric parsers** so callers specialize at
+  concrete types. `dec`, `hex`, `oct`, `bin`, `digs`, and `signed` all
+  became `Num a => …` in 0.5.x but lacked unfoldings, so cross-module
+  callers paid dictionary-passing overhead on every digit. Adding
+  `{-# INLINABLE #-}` recovers ~27% on the Log workload (188 μs → 137 μs),
+  putting MiniParser back in the same league as Megaparsec on that
+  benchmark. CSV and JSON also see modest improvements. README's
+  Performance Benchmarks section refreshed with the new numbers and a
+  softened analysis (MiniParser is "competitive with Megaparsec" rather
+  than "consistently faster" — the Log workload is now within ~3% of
+  Megaparsec instead of ahead).
+
+* **`perf-compare` build fixes.** The benchmark project's `.cabal` was
+  missing a `scientific` build-dep added to `MiniParser.Base` in 0.5.x,
+  and `BenchLog.hs` / `BenchJSON.hs` still referenced `MP.nat` (renamed
+  to `MP.dec` in 0.5.x). Both fixed; `cabal bench bench-csv bench-log
+  bench-json` now runs cleanly.
+
 ## 0.6.0.0 -- 2026-05-01
 
 * **Breaking — `MiniParser.Base` now has an explicit export list.** Three

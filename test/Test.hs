@@ -429,6 +429,135 @@ hunitTests = TestList $ concat
   , "errorsToString test" ~:
     errorsToString [EndOfInput, CustomError "test"] @?= "EndOfInput CustomError \"test\""
     ]
+  -- <?> label combinator
+  , [ "<?> success path is unaffected" ~:
+        stripPos (parse (digit <?> "a digit") "5x") ~?= Right ('5', "x")
+    , "<?> on failure replaces inner error with Labeled" ~:
+        parse (digit <?> "a digit") "x" ~?= Left [Labeled "a digit" (Pos 1 1)]
+    , "<?> records start position of labelled parser, not failure point" ~:
+        -- After consuming 'ab' (cols 1-2), the labelled parser starts at col 3.
+        -- The label points at where we started looking for a digit, not at
+        -- whatever character the inner failure pointed at.
+        parse (string "ab" *> (digit <?> "a digit")) "abx"
+          ~?= Left [Labeled "a digit" (Pos 1 3)]
+    , "<?> drops error list of nested alternatives" ~:
+        -- Without <?>, the failure of (string \"foo\" <|> string \"bar\") would
+        -- surface only \"bar\"'s mismatch (since <|> drops the first branch's
+        -- errors). With <?> the surface error is the label.
+        parse ((string "foo" <|> string "bar") <?> "foo or bar") "xyz"
+          ~?= Left [Labeled "foo or bar" (Pos 1 1)]
+    , "<?> EOF case still gets the label" ~:
+        parse (digit <?> "a digit") "" ~?= Left [Labeled "a digit" (Pos 1 1)]
+    -- Adversarial: outer <?> wins over inner <?> (label replacement is total)
+    , "<?> nested: outer label overrides inner label" ~:
+        parse ((digit <?> "inner") <?> "outer") "x"
+          ~?= Left [Labeled "outer" (Pos 1 1)]
+    -- Adversarial: <?> over `empty` — Empty is replaced with the label
+    , "<?> over empty produces a Labeled, not [Empty]" ~:
+        parse ((empty :: Parser Char) <?> "anything") "abc"
+          ~?= Left [Labeled "anything" (Pos 1 1)]
+    -- Adversarial: <?> does NOT commit; surrounding <|> still backtracks
+    , "<?> on its own does not prevent <|> backtracking" ~:
+        let p = (digit <?> "a digit") <|> pure '?'
+        in stripPos (parse p "x") ~?= Right ('?', "x")
+    -- Adversarial: <?> over a CustomError — label still wins
+    , "<?> over pFailStr replaces the CustomError" ~:
+        parse ((pFailStr "deep" :: Parser ()) <?> "shallow") "anything"
+          ~?= Left [Labeled "shallow" (Pos 1 1)]
+    -- Adversarial: <?> remembers position even after partial consumption
+    --   inside the labelled parser
+    , "<?> position is start, even when inner parser consumed input first" ~:
+        -- The labelled parser starts at col 3, then 'string \"ab\"' eats 2
+        -- chars (advancing to col 5) before 'digit' fails. The label still
+        -- points at col 3.
+        parse (string "xy" *> ((string "ab" *> digit) <?> "ab then digit")) "xyaby"
+          ~?= Left [Labeled "ab then digit" (Pos 1 3)]
+    ]
+  -- commit (cut) combinator
+  , [ "commit success is transparent" ~:
+        stripPos (parse (commit (string "abc")) "abcdef") ~?= Right ("abc", "def")
+    , "commit alone (no <|>) — parse strips top-level Committed wrapper" ~:
+        parse (commit digit) "x" ~?= Left [Unexpected' "x"]
+    , "without commit, <|> backtracks past partial first branch" ~:
+        -- 'string "abc"' succeeds, then 'string "xyz"' fails, so the whole
+        -- left branch fails; <|> falls through to the standalone string "abc"
+        -- which now succeeds.
+        let p = (string "abc" *> string "xyz") <|> string "abc"
+        in stripPos (parse p "abc!!!") ~?= Right ("abc", "!!!")
+    , "commit propagates failure past <|> instead of backtracking" ~:
+        -- Same shape as the previous test, but the left branch is wrapped in
+        -- 'commit'. Now the <|> sees the Committed marker and propagates the
+        -- inner error rather than trying the right branch.
+        let p = commit (string "abc" *> string "xyz") <|> string "abc"
+        in parse p "abc!!!" ~?= Left [Unexpected "xyz" "!!!"]
+    , "commit + <?> together: label survives the commit unwrap" ~:
+        let p = commit (digit <?> "a digit") <|> pure '?'
+        in parse p "x" ~?= Left [Labeled "a digit" (Pos 1 1)]
+    , "nested commit unwraps fully at parse boundary" ~:
+        parse (commit (commit digit)) "x" ~?= Left [Unexpected' "x"]
+    , "commit does not affect later <|>s after success" ~:
+        -- The left side commits and *succeeds*, so commit is a no-op. The
+        -- remaining input should be available for the next parser.
+        stripPos (parse (commit (string "abc") *> (digit <|> pure '?')) "abc!")
+          ~?= Right ('?', "!")
+    -- Adversarial: triple-nested commit still fully unwrapped at parse
+    , "commit triple-nested unwraps fully at parse boundary" ~:
+        parse (commit (commit (commit digit))) "x" ~?= Left [Unexpected' "x"]
+    -- Adversarial: footgun — <?> on the OUTSIDE of commit silently undoes it.
+    -- This encodes the documented behaviour so future refactors can't change
+    -- it without a test failing visibly.
+    , "<?> outside commit discards the Committed marker (footgun)" ~:
+        -- If <?> preserved the Committed marker, this would propagate and
+        -- the result would be Left [Labeled ...]. Since <?>'s implementation
+        -- replaces ANY failure with a Labeled (and so loses the marker),
+        -- the surrounding <|> backtracks and pure '?' succeeds.
+        let p = (commit digit <?> "a digit") <|> pure '?'
+        in stripPos (parse p "x") ~?= Right ('?', "x")
+    -- Adversarial: scope of commit is limited to its argument. If the
+    -- wrapped parser succeeds and a later parser in the same branch fails,
+    -- the failure is NOT committed.
+    , "commit scope: failure AFTER commit succeeds backtracks normally" ~:
+        -- commit(string "abc") succeeds; THEN string "xyz" fails. The
+        -- commit's scope is already past, so the <|> sees a plain failure
+        -- and backtracks to the second branch.
+        let p = (commit (string "abc") *> string "xyz") <|> string "abc"
+        in stripPos (parse p "abc!!!") ~?= Right ("abc", "!!!")
+    -- Adversarial: commit propagates through exactly ONE <|>. `many` is
+    -- built from a tower of <|>s, so a single 'commit' inside the body of
+    -- `many` is stripped at the innermost <|> and the outermost <|> falls
+    -- through to `pure []`. The result: many silently succeeds with the
+    -- list collected up to the commit point, original input is restored.
+    -- This is a documented footgun — encoded here so that any change to
+    -- <|>'s semantics (e.g. multi-level propagation) shows up as a test
+    -- failure to be reasoned about explicitly.
+    , "commit inside many: marker stripped at one <|>, outer falls through" ~:
+        let p = many (commit (digit <* char ','))
+        in stripPos (parse p "1,2X") ~?= Right ([], "1,2X")
+    -- Adversarial: commit on `empty` — Empty is wrapped, then unwrapped at parse
+    , "commit empty: parse strips marker, surfaces [Empty]" ~:
+        parse (commit (empty :: Parser Char)) "abc" ~?= Left [Empty]
+    -- Adversarial: commit in the right branch of <|> — left branch fails
+    --   normally, right branch's commit fires but no enclosing <|> remains,
+    --   so parse strips the marker.
+    , "commit in right branch with no outer <|> still surfaces plain error" ~:
+        let p = string "ab" <|> commit (string "cd")
+        in parse p "ce" ~?= Left [Unexpected "cd" "ce"]
+    -- Adversarial: <?> over eof
+    , "<?> over eof produces Labeled" ~:
+        parse (eof <?> "end of input") "x"
+          ~?= Left [Labeled "end of input" (Pos 1 1)]
+    -- Adversarial: nested commit, where ONLY the inner one fails (the outer
+    -- commit's wrapper doesn't actually fail because the inner is wrapped
+    -- AND we have a layer of `<|>` between them).
+    , "commit propagates through nested <|>: inner commit wins" ~:
+        -- Inner: commit (string "ab") fails on "ax", wraps with Committed.
+        -- The first <|> sees Committed and propagates Left ["ab" vs "ax"].
+        -- The outer commit wraps that with another Committed.
+        -- The second <|> sees Committed and propagates again.
+        -- parse strips the top Committed.
+        let p = (commit (commit (string "ab")) <|> string "cd") <|> string "x"
+        in parse p "ax" ~?= Left [Unexpected "ab" "ax"]
+    ]
   -- Position tracking tests live in PosTests (separate module) so that
   -- mhs's toplevel compile pass doesn't overflow on a single huge module.
   , posTests

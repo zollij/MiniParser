@@ -39,6 +39,7 @@ to code something useful from scratch.
   - [Take-Until & Take-While Parsers](#take-until--take-while-parsers)
   - [Combinator Parsers](#combinator-parsers)
   - [Standard Alternative Parsers](#standard-alternative-parsers)
+  - [Error Labeling and Cut](#error-labeling-and-cut)
   - [Whitespace and Comments](#whitespace-and-comments)
   - [Line-Oriented Parsers](#line-oriented-parsers)
   - [Expression Parser](#expression-parser)
@@ -431,14 +432,14 @@ imported modules:
 | `Parser a` | `newtype P (PState -> Either [Error] (a, PState))` -- a parser that produces a value of type `a` |
 | `PState` | `PState !Pos !Text` -- parser state: current position and remaining input |
 | `Pos` | `Pos !Int !Int` -- position in source: line number and column number (both 1-based by default) |
-| `Error` | Sum type: `EndOfInput`, `Unexpected String String`, `Unexpected' String`, `CustomError String`, `Empty`, `ExpectedEndOfFile Char` |
+| `Error` | Sum type: `EndOfInput`, `Unexpected String String`, `Unexpected' String`, `CustomError String`, `Empty`, `ExpectedEndOfFile Char`, `Labeled String Pos`, `Committed [Error]` |
 
 Note: `Error` constructors use `String` for error messages (display only).
 The parse stream itself is `Text`.
 
 ### Error Types
 
-Parsers report failures via `Left [Error]`. The `Error` type has six
+Parsers report failures via `Left [Error]`. The `Error` type has eight
 constructors:
 
 | Constructor | Fields | Meaning | Produced by |
@@ -449,11 +450,17 @@ constructors:
 | `CustomError` | `message::String` | User-defined error message | `pFailStr` |
 | `Empty` | *(none)* | Identity element for `Alternative`; indicates a branch produced no result | `empty` (the `Alternative` identity) |
 | `ExpectedEndOfFile` | `found::Char` | `eof` expected end of input but found more data | `eof` |
+| `Labeled` | `lbl::String, pos::Pos` | A labeled parser failed; carries the label and the position where the labeled parser *started* | `<?>` (see [Error Labeling and Cut](#error-labeling-and-cut)) |
+| `Committed` | `inner::[Error]` | *Internal marker.* Tags a failure as committed so the surrounding `<\|>` propagates instead of backtracking. `parse` strips any top-level `Committed` wrapper before returning, so external callers never observe one. | `commit` (see [Error Labeling and Cut](#error-labeling-and-cut)) |
 
-When `<|>` is used, the current implementation pDiscards the left branch's
+When `<|>` is used, the current implementation discards the left branch's
 errors and tries the right branch. Only the final failing branch's errors
 are reported. This keeps error lists short but means earlier alternatives'
-failures are not accumulated.
+failures are not accumulated. Two combinators —
+[`<?>`](#error-labeling-and-cut) for replacing low-level errors with a
+descriptive label, and [`commit`](#error-labeling-and-cut) for forcing
+non-backtracking propagation — let you control this behaviour at choice
+boundaries.
 
 Use `errorsToString :: [Error] -> String` to convert an error list to a
 human-readable string for display.
@@ -626,7 +633,8 @@ These peek at input without consuming it.
 ### Standard Alternative Parsers
 
 These are from Haskell's `Alternative` type class (`Control.Applicative`).
-MiniParser's `<|>` always backtracks.
+MiniParser's `<|>` always backtracks (except in the presence of
+[`commit`](#error-labeling-and-cut)).
 
 | Parser | Type | Description |
 |--------|------|-------------|
@@ -635,6 +643,112 @@ MiniParser's `<|>` always backtracks.
 | `some p` | `Parser a -> Parser [a]` | One or more |
 | `optional p` | `Parser a -> Parser (Maybe a)` | Zero or one |
 | `empty` | `Parser a` | Always fail |
+
+### Error Labeling and Cut
+
+Two combinators control how errors propagate through `<|>`:
+
+| Parser | Type | Description |
+|--------|------|-------------|
+| `p <?> lbl` | `Parser a -> String -> Parser a` | If `p` fails, replace its error with a single `Labeled lbl pos` carrying `lbl` and the position where `p` *started*. Success is unchanged. `infix 0` (lowest precedence, non-associative). |
+| `commit p` | `Parser a -> Parser a` | If `p` fails, mark the failure so the surrounding `<\|>` propagates it instead of backtracking. Success is unchanged. |
+
+Both are *additive* — code that doesn't use them is unaffected.
+
+#### `<?>` — labeling failures
+
+When a parser made of many primitives fails, the surface error is whatever
+the deepest primitive emitted (an `Unexpected'` on a single character, an
+`EndOfInput`, etc.). `<?>` replaces that low-level error with a single
+descriptive label:
+
+```haskell
+> parse (signed float :: Parser Double) "abc"
+Left [Unexpected' "a"]                          -- bare primitive error
+
+> parse ((signed float :: Parser Double) <?> "a number") "abc"
+Left [Labeled "a number" (Pos 1 1)]             -- now self-explanatory
+```
+
+The recorded `Pos` is where the labeled parser *started* — not wherever
+inside it the failure happened — so the label points at the user-meaningful
+"I expected this here" spot:
+
+```haskell
+> parse (string "ab" *> (digit <?> "a digit")) "abx"
+Left [Labeled "a digit" (Pos 1 3)]              -- col 3, where digit started
+```
+
+`<?>` also collapses the noisy error from a failing chain of alternatives:
+
+```haskell
+keyword :: Parser Text
+keyword = (symbol "if" <|> symbol "then" <|> symbol "else") <?> "a keyword"
+```
+
+Without `<?>`, the failure surfaces only the last branch's mismatch (`<|>`
+drops the left branch's errors); with `<?>`, the user-visible error is the
+labeled one regardless of which branch failed last.
+
+#### `commit` — non-backtracking choice
+
+By default, MiniParser's `<|>` backtracks: if the left branch fails for
+*any* reason — even after consuming half the input — the right branch is
+tried. This is convenient but produces misleading errors when a recognised
+prefix unambiguously commits the parse to one branch:
+
+```haskell
+-- A toy 'let-binding or expression' parser. Without commit:
+let p = (symbol "let" *> ident *> symbol "=" *> expr)   -- a let-binding
+        <|> expr                                         -- or an expression
+
+-- On malformed input "let x =", the let-binding branch fails (expr
+-- couldn't parse the missing RHS). <|> backtracks to try plain 'expr',
+-- which also fails — and *its* error is what the user sees, blaming the
+-- 'let' keyword rather than the missing RHS.
+```
+
+Wrap the part of the branch that — once recognised — unambiguously commits
+the parse, in `commit`:
+
+```haskell
+let p = (symbol "let" *> commit (ident *> symbol "=" *> expr))
+        <|> expr
+-- Now the let-binding branch commits as soon as 'let' is consumed.
+-- A failure inside 'commit (...)' propagates past <|> instead of
+-- backtracking, so the user sees the real error: "expected expression".
+```
+
+Mechanism: a failed `commit p` wraps its errors in an internal `Committed`
+marker. The `Alternative` instance for `<|>` recognises that marker and
+propagates the failure instead of trying the next branch. `parse` strips
+the marker before returning, so external callers see plain errors.
+
+Two notes on scope:
+
+- `commit` only fires if the wrapped parser *fails*. If it succeeds and a
+  later parser in the same branch fails, the failure is *not* committed —
+  the surrounding `<|>` will still backtrack.
+- `commit` does not stack with anything outside its argument. To commit a
+  whole branch, wrap the whole branch.
+
+#### Interaction: order matters when combining `<?>` and `commit`
+
+`<?>` *replaces* whatever error its argument produces — including a
+`Committed` marker. So putting `<?>` outside `commit` silently undoes the
+commit:
+
+```haskell
+-- Right: <?> on the inside, commit on the outside. The Committed marker
+-- wraps a Labeled error, and <|> sees the marker and propagates.
+commit (digit <?> "a digit") <|> pure '?'
+
+-- Wrong: <?> on the outside discards the Committed marker, so <|>
+-- silently backtracks and `pure '?'` succeeds.
+commit digit <?> "a digit" <|> pure '?'
+```
+
+Rule of thumb: **`commit` goes on the outside, `<?>` on the inside.**
 
 ### Whitespace and Comments
 
@@ -837,30 +951,31 @@ GHC 9.6.7, `-O2`, Linux x86_64. Times are the Criterion `mean` estimate.
 
 | Parser | Mean | Relative |
 |--------|------|----------|
-| Attoparsec | 100 μs | 1.0x |
-| **MiniParser** | **121 μs** | **1.2x** |
-| Megaparsec | 262 μs | 2.6x |
+| Attoparsec | 99 μs | 1.0x |
+| **MiniParser** | **142 μs** | **1.4x** |
+| Megaparsec | 254 μs | 2.6x |
 
 #### Log (100 entries)
 
 | Parser | Mean | Relative |
 |--------|------|----------|
-| Attoparsec | 33 μs | 1.0x |
-| **MiniParser** | **100 μs** | **3.0x** |
-| Megaparsec | 132 μs | 4.0x |
+| Attoparsec | 31 μs | 1.0x |
+| Megaparsec | 133 μs | 4.3x |
+| **MiniParser** | **137 μs** | **4.4x** |
 
 #### JSON (806 values)
 
 | Parser | Mean | Relative |
 |--------|------|----------|
-| Attoparsec | 98 μs | 1.0x |
-| **MiniParser** | **318 μs** | **3.2x** |
-| Megaparsec | 373 μs | 3.8x |
+| Attoparsec | 96 μs | 1.0x |
+| **MiniParser** | **352 μs** | **3.7x** |
+| Megaparsec | 375 μs | 3.9x |
 
 ### Analysis
 
-MiniParser is consistently faster than Megaparsec across all three workloads.
-On CSV parsing (primarily string-oriented), MiniParser is within 20% of
+MiniParser is competitive with Megaparsec across all three workloads —
+faster on CSV (1.8x) and JSON (1.07x), and within ~3% on Log (a statistical
+tie). On CSV parsing (primarily string-oriented), MiniParser is ~1.4x
 Attoparsec. On number-heavy workloads (log and JSON), Attoparsec's highly
 optimized `decimal` parser gives it a larger advantage. MiniParser's `dec`
 parser uses a simpler `foldl'`-based implementation, which leaves room for
@@ -869,7 +984,8 @@ future optimization.
 ### Reproducing
 
 The benchmark code lives in `perf-compare/`, a self-contained Cabal project
-that symlinks to MiniParser's `src/` directory.
+that hard-links to MiniParser's `src/` directory (so source changes are
+picked up automatically).
 
 ```bash
 cd perf-compare

@@ -43,16 +43,16 @@ mpLog = many (mpEntry <* MP.char '\n')
 
 mpEntry :: MP.Parser LogEntry
 mpEntry = do
-  y  <- MP.nat; _ <- MP.char '-'
-  mo <- MP.nat; _ <- MP.char '-'
-  d  <- MP.nat; _ <- MP.char ' '
-  h  <- MP.nat; _ <- MP.char ':'
-  mi <- MP.nat; _ <- MP.char ':'
-  s  <- MP.nat; _ <- MP.char ' '
-  i1 <- MP.nat; _ <- MP.char '.'
-  i2 <- MP.nat; _ <- MP.char '.'
-  i3 <- MP.nat; _ <- MP.char '.'
-  i4 <- MP.nat; _ <- MP.char ' '
+  y  <- MP.dec; _ <- MP.char '-'
+  mo <- MP.dec; _ <- MP.char '-'
+  d  <- MP.dec; _ <- MP.char ' '
+  h  <- MP.dec; _ <- MP.char ':'
+  mi <- MP.dec; _ <- MP.char ':'
+  s  <- MP.dec; _ <- MP.char ' '
+  i1 <- MP.dec; _ <- MP.char '.'
+  i2 <- MP.dec; _ <- MP.char '.'
+  i3 <- MP.dec; _ <- MP.char '.'
+  i4 <- MP.dec; _ <- MP.char ' '
   p  <- MP.pTakeWhile (\c -> c /= '\n' && c /= '\r')
   return (LogEntry y mo d h mi s i1 i2 i3 i4 p)
 

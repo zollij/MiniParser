@@ -108,8 +108,8 @@ mpSignedInt :: MP.Parser Int
 mpSignedInt = do
   c <- MP.lookAhead
   if c == '-'
-    then do _ <- MP.item; n <- MP.nat; return (negate n)
-    else MP.nat
+    then do _ <- MP.item; n <- MP.dec; return (negate n)
+    else MP.dec
 
 mpBool :: MP.Parser Value
 mpBool = (Bool True  <$ MP.string "true")
