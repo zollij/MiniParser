@@ -1,5 +1,29 @@
 # Revision history for MiniParser
 
+## 0.7.0.1 -- 2026-05-05
+
+* **Bug fix: `<?>` outside `commit` no longer silently disables the
+  commit.** Pre-fix, `(<?>)`'s `Left _` clause matched a `Left
+  [Committed errs]` shape and replaced it with a `Labeled`, so a
+  surrounding `<|>` saw a plain failure and backtracked instead of
+  propagating — ie. `commit p <?> "lbl"` was a footgun that silently
+  cancelled the commit. The fix special-cases `Left [Committed _]`
+  in `<?>` so the marker survives. The label *is* silently dropped
+  when commit fires (the inner committed error wins) — to keep the
+  label visible, write `commit (p <?> "lbl")`. Position of `<?>`
+  now controls only whether the label is visible in the error, never
+  whether the commit fires.
+* The "Interaction: where to put the label" subsection of
+  `README.md`'s Error Labeling and Cut chapter rewritten to reflect
+  the corrected semantics.
+* Tests: 10 new adversarial cases added to `test/Test.hs` for the
+  fix — regression test for the headline shape (`commit p <?> "lbl"
+  <|> q`), stacked `<?>`s outside commit, label-inside-commit-with-
+  outer-`<?>`, position preservation through Committed, deep nested
+  commits with deep labels, `<?>` after `fmap`/`<*>` of a commit,
+  and the singleton-only `[Committed _]` convention shared with
+  `<|>`. Suite count is now 348 (was 338).
+
 ## 0.7.0.0 -- 2026-05-02
 
 * **New combinators: `<?>` and `commit`** for better error reporting at

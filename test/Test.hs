@@ -503,16 +503,67 @@ hunitTests = TestList $ concat
     -- Adversarial: triple-nested commit still fully unwrapped at parse
     , "commit triple-nested unwraps fully at parse boundary" ~:
         parse (commit (commit (commit digit))) "x" ~?= Left [Unexpected' "x"]
-    -- Adversarial: footgun — <?> on the OUTSIDE of commit silently undoes it.
-    -- This encodes the documented behaviour so future refactors can't change
-    -- it without a test failing visibly.
-    , "<?> outside commit discards the Committed marker (footgun)" ~:
-        -- If <?> preserved the Committed marker, this would propagate and
-        -- the result would be Left [Labeled ...]. Since <?>'s implementation
-        -- replaces ANY failure with a Labeled (and so loses the marker),
-        -- the surrounding <|> backtracks and pure '?' succeeds.
+    -- Regression: <?> outside commit MUST preserve the Committed marker.
+    -- Pre-fix, <?>'s 'Left _' clause matched the Committed shape and replaced
+    -- it with a Labeled, silently undoing the commit and letting <|>
+    -- backtrack — the documented "footgun". The fix special-cases
+    -- 'Left [Committed _]' so the marker survives <?>. If this test ever
+    -- starts returning Right ('?', "x") again, the regression is back.
+    , "<?> outside commit propagates the Committed marker" ~:
         let p = (commit digit <?> "a digit") <|> pure '?'
-        in stripPos (parse p "x") ~?= Right ('?', "x")
+        in parse p "x" ~?= Left [Unexpected' "x"]
+    -- Companion: when commit fires, the surface label is dropped (the
+    -- inner committed error wins). Documents the cost of the fix —
+    -- '<?>' loses its label here. To get both, write 'commit (p <?> lbl)'.
+    , "<?> outside commit: label is dropped when commit fires" ~:
+        parse (commit digit <?> "a digit") "x" ~?= Left [Unexpected' "x"]
+    -- Stacked '<?>'s outside commit all preserve the marker; none of
+    -- their labels apply (commit wins all the way up).
+    , "stacked <?>s outside commit all preserve the marker" ~:
+        let p = ((commit digit <?> "inner") <?> "outer") <|> pure '?'
+        in parse p "x" ~?= Left [Unexpected' "x"]
+    -- The 'commit (p <?> lbl) <?> outer' shape: the inner label is
+    -- inside the commit (so it survives), the outer <?> sees Committed
+    -- and preserves; outer label is silently dropped.
+    , "commit (p <?> inner) <?> outer: inner label survives, outer dropped" ~:
+        let p = (commit (digit <?> "inner") <?> "outer") <|> pure '?'
+        in parse p "x" ~?= Left [Labeled "inner" (Pos 1 1)]
+    -- Sequence-then-commit: position information inside the labelled
+    -- parser is preserved through the Committed wrapper unchanged.
+    , "commit (label) preserves inner Pos through outer <?> + <|>" ~:
+        let p = string "ab" *> commit (digit <?> "a digit") <|> pure ' '
+        in parse p "ab!" ~?= Left [Labeled "a digit" (Pos 1 3)]
+    -- Triple-nested commit + a label deep inside still surfaces correctly
+    -- after parse strips the top-level Committed wrappers (recursive unwrap).
+    , "deep nested commits preserve a deep label end-to-end" ~:
+        let p = commit (commit (commit (digit <?> "deep"))) <|> pure '?'
+        in parse p "x" ~?= Left [Labeled "deep" (Pos 1 1)]
+    -- Subtle: when an inner '<|>' STRIPS the Committed marker, the
+    -- outer '<?>' no longer sees Committed and the label DOES apply.
+    -- This is by design — commit propagates one level, period.
+    , "commit consumed by inner <|> means <?> applies the label normally" ~:
+        let p = ((commit digit <|> pure '?') <?> "lbl") <|> pure '!'
+        in stripPos (parse p "x") ~?= Right ('!', "x")
+    -- '<?>' success path is unaffected by the new clause.
+    , "<?> over commit-inside on success is transparent" ~:
+        stripPos (parse (commit digit <?> "a digit") "5x") ~?= Right ('5', "x")
+    -- Marker preservation through Functor: fmap doesn't disturb the
+    -- Committed shape, so '<?>' downstream still sees and preserves it.
+    , "<?> after fmap of a commit preserves the marker" ~:
+        let p = ((id <$> commit digit) <?> "lbl") <|> pure '?'
+        in parse p "x" ~?= Left [Unexpected' "x"]
+    -- Marker preservation through Applicative <*>:
+    , "<?> after <*> of a commit preserves the marker" ~:
+        let p = ((const <$> commit digit <*> pure ()) <?> "lbl") <|> pure '?'
+        in parse p "x" ~?= Left [Unexpected' "x"]
+    -- Defensive shape check: only a singleton [Committed _] is recognised
+    -- as the marker. A multi-element list whose head happens to be
+    -- Committed (only possible via direct 'pFail') is treated as ordinary
+    -- failure by <?>. Encodes the same singleton-only convention used by
+    -- '<|>'. If this changes, both clauses need to change in lockstep.
+    , "<?> singleton convention: only [Committed _] is preserved" ~:
+        parse ((pFail [Committed [Empty], EndOfInput] :: Parser ()) <?> "x") "abc"
+          ~?= Left [Labeled "x" (Pos 1 1)]
     -- Adversarial: scope of commit is limited to its argument. If the
     -- wrapped parser succeeds and a later parser in the same branch fails,
     -- the failure is NOT committed.

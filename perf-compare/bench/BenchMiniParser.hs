@@ -89,16 +89,16 @@ logParser = many (logEntry <* char '\n')
 
 logEntry :: Parser LogEntry
 logEntry = do
-  y  <- nat; _ <- char '-'
-  mo <- nat; _ <- char '-'
-  d  <- nat; _ <- char ' '
-  h  <- nat; _ <- char ':'
-  mi <- nat; _ <- char ':'
-  s  <- nat; _ <- char ' '
-  i1 <- nat; _ <- char '.'
-  i2 <- nat; _ <- char '.'
-  i3 <- nat; _ <- char '.'
-  i4 <- nat; _ <- char ' '
+  y  <- dec; _ <- char '-'
+  mo <- dec; _ <- char '-'
+  d  <- dec; _ <- char ' '
+  h  <- dec; _ <- char ':'
+  mi <- dec; _ <- char ':'
+  s  <- dec; _ <- char ' '
+  i1 <- dec; _ <- char '.'
+  i2 <- dec; _ <- char '.'
+  i3 <- dec; _ <- char '.'
+  i4 <- dec; _ <- char ' '
   p  <- pTakeWhile (\c -> c /= '\n' && c /= '\r')
   return (LogEntry y mo d h mi s i1 i2 i3 i4 p)
 
@@ -171,8 +171,8 @@ jNumber :: Parser Value
 jNumber = do
   c <- lookAhead
   if c == '-'
-    then do _ <- item; n <- nat; return (JNumber (negate n))
-    else JNumber <$> nat
+    then do _ <- item; n <- dec; return (JNumber (negate n))
+    else JNumber <$> dec
 
 jBool :: Parser Value
 jBool = (JBool True  <$ string "true")

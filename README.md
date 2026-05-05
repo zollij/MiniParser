@@ -732,23 +732,34 @@ Two notes on scope:
 - `commit` does not stack with anything outside its argument. To commit a
   whole branch, wrap the whole branch.
 
-#### Interaction: order matters when combining `<?>` and `commit`
+#### Interaction: where to put the label
 
-`<?>` *replaces* whatever error its argument produces — including a
-`Committed` marker. So putting `<?>` outside `commit` silently undoes the
-commit:
+`<?>` always preserves a `Committed` marker — when the inner parser
+fails *after* a `commit`, the commit propagates and the surrounding
+`<?>`'s label is silently dropped. That is correct: a committed parse
+path's real error should win over a generic surface label. The
+practical consequence is that the *position* of `<?>` decides whether
+the label survives:
 
 ```haskell
--- Right: <?> on the inside, commit on the outside. The Committed marker
--- wraps a Labeled error, and <|> sees the marker and propagates.
-commit (digit <?> "a digit") <|> pure '?'
+-- Both forms commit correctly on input that doesn't start with a digit
+-- (here "x"). The difference is whether the label is visible in the error.
 
--- Wrong: <?> on the outside discards the Committed marker, so <|>
--- silently backtracks and `pure '?'` succeeds.
-commit digit <?> "a digit" <|> pure '?'
+parse (commit (digit <?> "a digit") <|> pure '?') "x"
+-- Left [Labeled "a digit" (Pos 1 1)]
+-- (label is INSIDE the commit, so it survives the commit unwrap; the
+--  "x" doesn't appear in the error because <?> already replaced
+--  digit's underlying Unexpected' "x" with the label)
+
+parse (commit digit <?> "a digit" <|> pure '?') "x"
+-- Left [Unexpected' "x"]
+-- (label is OUTSIDE the commit; commit propagates and the label is
+--  dropped, so the surface error is digit's own complaint about the
+--  offending character — the "x" is the input that digit rejected)
 ```
 
-Rule of thumb: **`commit` goes on the outside, `<?>` on the inside.**
+Both are safe — neither silently disables the commit. To keep the
+label visible, write **`commit (p <?> "lbl")`**.
 
 ### Whitespace and Comments
 

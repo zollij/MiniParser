@@ -267,6 +267,12 @@ infix 0 <?>
 P p <?> lbl = P
   (\st@(PState pos _) ->
      case p st of
+       -- Committed errors win over surrounding labels: a parser that
+       -- has unambiguously committed (via 'commit') reports its real
+       -- failure, just as it does past surrounding '<|>' boundaries.
+       -- Without this, '<?>' would mask a committed CustomError with
+       -- a generic Labeled — defeating the point of committing.
+       Left errs@[Committed _] -> Left errs
        Left _  -> Left [Labeled lbl pos]
        Right r -> Right r)
 
